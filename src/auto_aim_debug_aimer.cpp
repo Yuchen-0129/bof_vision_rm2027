@@ -62,7 +62,7 @@ int main(int argc, char * argv[])
     camera.read(img, t);
     
     // 从串口获取四元数
-    q = gimbal.q(t - 1ms);  // 替换 cboard.imu_at(t - 1ms);
+    q = gimbal.q(t - 2ms);  // 替换 cboard.imu_at(t - 1ms);
     
     // 从串口获取模式
     mode = gimbal.mode();  // 替换 mode = cboard.mode;
@@ -72,13 +72,13 @@ int main(int argc, char * argv[])
       last_mode = mode;
     }
 
-    // recorder.record(img, q, t);
+    recorder.record(img, q, t);
 
     // 设定 gimbal 到 world 的旋转矩阵
     solver.set_R_gimbal2world(q);
 
     // 从串口获取欧拉角
-    // auto gimbal_state = gimbal.state();
+    auto gimbal_state = gimbal.state();
     // Eigen::Vector3d ypr = {gimbal_state.yaw, gimbal_state.pitch, 0};  // 直接从串口获取
 
     Eigen::Vector3d ypr = tools::eulers(solver.R_gimbal2world(), 2, 1, 0);
@@ -199,7 +199,7 @@ int main(int argc, char * argv[])
   }
 
   // 程序退出时发送停止命令
-  gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
+  //gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
 
   return 0;
 }
