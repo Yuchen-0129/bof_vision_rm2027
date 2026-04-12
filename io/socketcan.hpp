@@ -134,7 +134,7 @@ private:
 
   void read()
   {
-    int num_events = epoll_wait(epoll_fd_, events_, MAX_EVENTS, 2);
+    int num_events = epoll_wait(epoll_fd_, events_, MAX_EVENTS, -1);
     if (num_events == -1) throw std::runtime_error("Error wating for events!");
 
     for (int i = 0; i < num_events; i++) {

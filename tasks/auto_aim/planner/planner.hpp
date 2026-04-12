@@ -50,6 +50,7 @@ private:
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;
 
+  // 设置tinympc求解器
   void setup_yaw_solver(const std::string & config_path);
   void setup_pitch_solver(const std::string & config_path);
 

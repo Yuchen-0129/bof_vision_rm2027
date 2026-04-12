@@ -131,10 +131,20 @@ int main(int argc, char * argv[])
 
       // 当前帧target更新后
       std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
-      for (const Eigen::Vector4d & xyza : armor_xyza_list) {
+      for (int i = 0; i < static_cast<int>(armor_xyza_list.size()); ++i) {
+        const auto & xyza = armor_xyza_list[i];
         auto image_points =
           solver.reproject_armor(xyza.head(3), xyza[3], target.armor_type, target.name);
         tools::draw_points(img, image_points, {0, 255, 0});
+        if (image_points.empty()) continue;
+        float rx = image_points[0].x, ty = image_points[0].y;
+        for (const auto & p : image_points) {
+          if (p.x > rx) rx = p.x;
+          if (p.y < ty) ty = p.y;
+        }
+        tools::draw_text(
+          img, fmt::format("{}", i), {static_cast<int>(rx) - 8, static_cast<int>(ty) + 18},
+          {0, 255, 255}, 1.2, 2);
       }
 
       // aimer瞄准位置

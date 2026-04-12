@@ -37,6 +37,7 @@ Plan Planner::plan(Target target, double bullet_speed)
 
   // 1. Predict fly_time
   // 预测飞行时间
+  // 选择最近的目标
   Eigen::Vector3d xyz;
   auto min_dist = 1e10;
   for (auto & xyza : target.armor_xyza_list()) {
@@ -46,6 +47,8 @@ Plan Planner::plan(Target target, double bullet_speed)
       xyz = xyza.head<3>();
     }
   }
+  // 计算初次弹道轨迹
+  // 预测目标在 future + prev_fly_time 时刻的位置
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
   target.predict(bullet_traj.fly_time);
 
@@ -90,7 +93,8 @@ Plan Planner::plan(Target target, double bullet_speed)
   plan.pitch = pitch_solver_->work->x(0, HALF_HORIZON);
   plan.pitch_vel = pitch_solver_->work->x(1, HALF_HORIZON);
   plan.pitch_acc = pitch_solver_->work->u(0, HALF_HORIZON);
-
+  
+  // 发射延迟
   auto shoot_offset_ = 2;
   plan.fire =
     std::hypot(
@@ -104,7 +108,7 @@ Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 {
   if (!target.has_value()) return {false};
   
-  //
+  // 计算发射延迟时间
   double delay_time =
     std::abs(target->ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
 
@@ -119,7 +123,7 @@ Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 void Planner::setup_yaw_solver(const std::string & config_path)
 {
   auto yaml = tools::load(config_path);
-  auto max_yaw_acc = tools::read<double>(yaml, "max_yaw_acc");
+  auto max_yaw_acc = tools::read<double>(yaml, "max_yaw_acc");//最大yaw加速度限制
   auto Q_yaw = tools::read<std::vector<double>>(yaml, "Q_yaw");
   auto R_yaw = tools::read<std::vector<double>>(yaml, "R_yaw");
 

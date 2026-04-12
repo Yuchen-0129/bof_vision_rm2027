@@ -50,6 +50,7 @@ Target::Target(
     return c;
   };
 
+  // 这步再看看
   ekf_ = tools::ExtendedKalmanFilter(x0, P0, x_add);  //初始化滤波器（预测量、预测量协方差）
 }
 
@@ -77,6 +78,8 @@ void Target::predict(std::chrono::steady_clock::time_point t)
   t_ = t;
 }
 
+
+
 // 预测dt段的状态
 void Target::predict(double dt)
 {
@@ -101,13 +104,21 @@ void Target::predict(double dt)
   
   // Piecewise White Noise Model
   // https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/07-Kalman-Filter-Math.ipynb
-  double v1, v2;
+  double v1, v2, q_l, q_h;
   if (name == ArmorName::outpost) {
     v1 = 10;   // 前哨站加速度方差
     v2 = 0.1;  // 前哨站角加速度方差
+    q_l = 1;   // 前哨站高度差1的过程噪声（设为0，强制无高度差）
+    q_h = 1;   // 前哨站高度差2的过程噪声（设为0，强制无高度差）
+
+    
   } else {
     v1 = 100;  // 加速度方差
     v2 = 400;  // 角加速度方差
+    q_l = 0;   // 4装甲板的l参数过程噪声（根据实际情况设置）
+    q_h = 0;   // 4装甲板的h参数过程噪声（根据实际情况设置）
+
+
   }
   auto a = dt * dt * dt * dt / 4;
   auto b = dt * dt * dt / 2;
@@ -118,6 +129,8 @@ void Target::predict(double dt)
   // 预测过程噪声偏差的方差
   // clang-format off
   Eigen::MatrixXd Q{
+
+    // x       vx         y     vy        z     vz       a     w     r   l h
     {a * v1, b * v1,      0,      0,      0,      0,      0,      0, 0, 0, 0},
     {b * v1, c * v1,      0,      0,      0,      0,      0,      0, 0, 0, 0},
     {     0,      0, a * v1, b * v1,      0,      0,      0,      0, 0, 0, 0},
@@ -127,8 +140,8 @@ void Target::predict(double dt)
     {     0,      0,      0,      0,      0,      0, a * v2, b * v2, 0, 0, 0},
     {     0,      0,      0,      0,      0,      0, b * v2, c * v2, 0, 0, 0},
     {     0,      0,      0,      0,      0,      0,      0,      0, 0, 0, 0},
-    {     0,      0,      0,      0,      0,      0,      0,      0, 0, 0, 0},
-    {     0,      0,      0,      0,      0,      0,      0,      0, 0, 0, 0}
+    {     0,      0,      0,      0,      0,      0,      0,      0, 0, q_l, 0},
+    {     0,      0,      0,      0,      0,      0,      0,      0, 0, 0, q_h}
   };
   // clang-format on
 
@@ -153,7 +166,6 @@ void Target::predict(double dt)
 // 更新装甲板
 void Target::update(const Armor & armor)
 {
-  // 装甲板匹配
   int id;
   auto min_angle_error = 1e10;
   const std::vector<Eigen::Vector4d> & xyza_list = armor_xyza_list();
@@ -206,8 +218,11 @@ void Target::update(const Armor & armor)
 }
 
 
+
+// 观测 和 预测 更新
 void Target::update_ypda(const Armor & armor, int id)
 {
+  // 观测噪声
   //观测jacobi
   Eigen::MatrixXd H = h_jacobian(ekf_.x, id);
   // Eigen::VectorXd R_dig{{4e-3, 4e-3, 1, 9e-2}};
@@ -226,6 +241,8 @@ void Target::update_ypda(const Armor & armor, int id)
   // ]
 
 
+
+  // h(x) 表示从状态 x（EKF 预测的状态）计算出预测的观测值
 
   // 定义非线性转换函数h: x -> z
   auto h = [&](const Eigen::VectorXd & x) -> Eigen::Vector4d {
@@ -258,6 +275,9 @@ Eigen::VectorXd Target::ekf_x() const { return ekf_.x; }
 
 const tools::ExtendedKalmanFilter & Target::ekf() const { return ekf_; }
 
+
+
+// 返回 ekf_x的装甲板序列
 std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
 {
   std::vector<Eigen::Vector4d> _armor_xyza_list;
@@ -277,9 +297,21 @@ std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
 bool Target::diverged() const
 {
   auto r_ok = ekf_.x[8] > 0.05 && ekf_.x[8] < 0.5;
-  auto l_ok = ekf_.x[8] + ekf_.x[9] > 0.05 && ekf_.x[8] + ekf_.x[9] < 0.5;
+  // auto l_ok = ekf_.x[8] + ekf_.x[9] > 0.05 && ekf_.x[8] + ekf_.x[9] < 0.5;
 
-  if (r_ok && l_ok) return false;
+  // if (r_ok && l_ok) return false;
+
+  if (name == ArmorName::outpost) {
+    // 前哨站：检查高度差是否合理
+    auto dz1_ok = std::abs(ekf_.x[9]) < 0.5;  // 高度差1的合理范围
+    auto dz2_ok = std::abs(ekf_.x[10]) < 0.5; // 高度差2的合理范围
+    if (r_ok && dz1_ok && dz2_ok) return false;
+} else {
+    // 4装甲板：检查半径差
+    auto l_ok = ekf_.x[8] + ekf_.x[9] > 0.05 && ekf_.x[8] + ekf_.x[9] < 0.5;
+    if (r_ok && l_ok) return false;
+}
+
 
   tools::logger()->debug("[Target] r={:.3f}, l={:.3f}", ekf_.x[8], ekf_.x[9]);
   return true;
@@ -300,47 +332,58 @@ bool Target::convergened()
   return is_converged_;
 }
 
-// 计算出装甲板中心的坐标（考虑长短轴）
+// 通过ekf_x（车体中心）计算出装甲板中心的坐标（考虑长短轴）
 Eigen::Vector3d Target::h_armor_xyz(const Eigen::VectorXd & x, int id) const
 {
   auto angle = tools::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
   auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
+  auto outpost = armor_num_ == 3;
+
 
   auto r = (use_l_h) ? x[8] + x[9] : x[8];
   auto armor_x = x[0] - r * std::cos(angle);
   auto armor_y = x[2] - r * std::sin(angle);
-  auto armor_z = (use_l_h) ? x[4] + x[10] : x[4];
+  // auto armor_z = (use_l_h) ? x[4] + x[10] : x[4];
+  auto armor_z = (outpost) ? getoutpost_armor_z(id, x) : (use_l_h) ? x[4] + x[10] : x[4];
 
+
+  
   return {armor_x, armor_y, armor_z};
 }
 
 
 // 没看懂VvV
+// 观测雅可比矩阵
 Eigen::MatrixXd Target::h_jacobian(const Eigen::VectorXd & x, int id) const
 {
-  auto angle = tools::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
-  auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
+  auto angle = tools::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);// 角度
+  auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);// 维护长短轴半径
+  auto outpost = (armor_num_ == 3); 
 
-  auto r = (use_l_h) ? x[8] + x[9] : x[8];
-  auto dx_da = r * std::sin(angle);
-  auto dy_da = -r * std::cos(angle);
+  
+  auto r = (use_l_h) ? x[8] + x[9] : x[8];// 半径
+  auto dx_da = r * std::sin(angle);// 角度对x的偏导
+  auto dy_da = -r * std::cos(angle);// 角度对y的偏导
 
-  auto dx_dr = -std::cos(angle);
-  auto dy_dr = -std::sin(angle);
-  auto dx_dl = (use_l_h) ? -std::cos(angle) : 0.0;
-  auto dy_dl = (use_l_h) ? -std::sin(angle) : 0.0;
+  auto dx_dr = -std::cos(angle);// 半径对x的偏导
+  auto dy_dr = -std::sin(angle);// 半径对y的偏导
+  auto dx_dl = (use_l_h) ? -std::cos(angle) : 0.0;// 半径差对x的偏导
+  auto dy_dl = (use_l_h) ? -std::sin(angle) : 0.0;// 半径差对y的偏导
 
-  auto dz_dh = (use_l_h) ? 1.0 : 0.0;
+  auto dz_dh = (use_l_h) ? 1.0 : 0.0;// 高度对z的偏导
+  auto dz_dl_outpost = (outpost && id == 1) ? 1.0 : 0.0;  // 前哨站高度差1 (x[9])
+  auto dz_dh_outpost = (outpost && id == 2) ? 1.0 : 0.0;  // 前哨站高度差2 (x[10])
 
   // clang-format off
   Eigen::MatrixXd H_armor_xyza{
     {1, 0, 0, 0, 0, 0, dx_da, 0, dx_dr, dx_dl,     0},
     {0, 0, 1, 0, 0, 0, dy_da, 0, dy_dr, dy_dl,     0},
-    {0, 0, 0, 0, 1, 0,     0, 0,     0,     0, dz_dh},
+    {0, 0, 0, 0, 1, 0,     0, 0,     0,     dz_dl_outpost, dz_dh_outpost + dz_dh},
     {0, 0, 0, 0, 0, 0,     1, 0,     0,     0,     0}
   };
   // clang-format on
 
+  // 得到装甲板观测的雅可比矩阵
   Eigen::VectorXd armor_xyz = h_armor_xyz(x, id);
   Eigen::MatrixXd H_armor_ypd = tools::xyz2ypd_jacobian(armor_xyz);
   // clang-format off
