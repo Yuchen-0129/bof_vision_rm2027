@@ -37,8 +37,7 @@ int main(int argc, char * argv[])
   tools::Plotter plotter;// 绘图器
   tools::Recorder recorder;// 录制器
 
-  // 替换 CBoard 为 Gimbal
-  io::Gimbal gimbal(config_path);  // 替换 io::CBoard cboard(config_path);
+  io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
 
   auto_aim::YOLO detector(config_path, true);//识别器

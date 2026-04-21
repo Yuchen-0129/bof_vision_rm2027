@@ -3,7 +3,6 @@
 #include <thread>
 
 #include "io/camera.hpp"
-#include "io/dm_imu/dm_imu.hpp"
 #include "io/gimbal/gimbal.hpp"
 #include "tasks/auto_aim/aimer.hpp"
 #include "tasks/auto_aim/multithread/commandgener.hpp"
@@ -43,7 +42,6 @@ int main(int argc, char * argv[])
   tools::Recorder recorder;
 
   io::Camera camera(config_path);
-  // io::CBoard cboard(config_path);
   io::Gimbal gimbal(config_path);
 
   auto_aim::multithread::MultiThreadDetector detector(config_path);

@@ -3,8 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <thread>
 
-#include "io/cboard.hpp"
 #include "io/command.hpp"
+#include "io/gimbal/gimbal.hpp"
 #include "tools/exiter.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
@@ -52,7 +52,12 @@ int main(int argc, char * argv[])
   tools::Exiter exiter;
   tools::Plotter plotter;
 
-  io::CBoard cboard(config_path);
+  io::Gimbal gimbal(config_path);
+
+  auto send_command = [&gimbal](const io::Command & c) {
+    gimbal.send(
+      c.control, c.shoot, static_cast<float>(c.yaw), 0, 0, static_cast<float>(c.pitch), 0, 0);
+  };
 
   auto init_angle = 0;
   double slice = circle * 100;  //切片数=周期*帧率
@@ -65,7 +70,7 @@ int main(int argc, char * argv[])
   int count = 0;
 
   io::Command init_command{1, 0, 0, 0};
-  cboard.send(init_command);
+  send_command(init_command);
   std::this_thread::sleep_for(5s);  //等待云台归零
 
   io::Command command{0};
@@ -83,7 +88,7 @@ int main(int argc, char * argv[])
 
     std::this_thread::sleep_for(1ms);
 
-    Eigen::Quaterniond q = cboard.imu_at(timestamp);
+    Eigen::Quaterniond q = gimbal.q(timestamp);
 
     Eigen::Vector3d eulers = tools::eulers(q, 2, 1, 0);
 
@@ -106,7 +111,7 @@ int main(int argc, char * argv[])
         count++;
       }
 
-      cboard.send(command);
+      send_command(command);
       if (axis_index == 0) {
         data["cmd_yaw"] = command.yaw * 57.3;
         data["last_cmd_yaw"] = last_command.yaw * 57.3;
@@ -130,7 +135,7 @@ int main(int argc, char * argv[])
       command = {1, 0, tools::limit_rad(cmd_angle / 57.3), 0};
       count++;
 
-      cboard.send(command);
+      send_command(command);
       data["cmd_yaw"] = command.yaw * 57.3;
       data["last_cmd_yaw"] = last_command.yaw * 57.3;
       data["gimbal_yaw"] = eulers[0] * 57.3;
@@ -150,7 +155,7 @@ int main(int argc, char * argv[])
         t += 2.4;
         last_t = t;
       }
-      cboard.send(command);
+      send_command(command);
 
       data["t"] = t;
       data["cmd_yaw"] = command.yaw * 57.3;
