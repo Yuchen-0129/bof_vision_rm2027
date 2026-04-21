@@ -1,9 +1,9 @@
-﻿#include <fmt/format.h>
+#include <fmt/format.h>
 
 #include <string>
 
 #include "io/camera.hpp"
-#include "io/cboard.hpp"
+#include "io/gimbal/gimbal.hpp"
 #include "tasks/auto_buff/buff_aimer.hpp"
 #include "tasks/auto_buff/buff_detector.hpp"
 #include "tasks/auto_buff/buff_solver.hpp"
@@ -37,8 +37,7 @@ int main(int argc, char * argv[])
   tools::Recorder recorder;
   tools::Exiter exiter;
 
-  // 初始化C板、相机
-  io::CBoard cboard(config_path);
+  io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
 
   // 初始化识别器、解算器、追踪器、瞄准器
@@ -54,7 +53,7 @@ int main(int argc, char * argv[])
 
   while (!exiter.exit()) {
     camera.read(img, t);
-    q = cboard.imu_at(t);
+    q = gimbal.q(t);
     // recorder.record(img, q, t);
 
     // -------------- 打符核心逻辑 --------------
@@ -69,9 +68,11 @@ int main(int argc, char * argv[])
 
     auto target_copy = target;
 
-    auto command = aimer.aim(target_copy, t, cboard.bullet_speed, true);
+    auto command = aimer.aim(target_copy, t, gimbal.state().bullet_speed, true);
 
-    cboard.send(command);
+    gimbal.send(
+      command.control, command.shoot, static_cast<float>(command.yaw), 0, 0,
+      static_cast<float>(command.pitch), 0, 0);
 
     // -------------- 调试输出 --------------
 
