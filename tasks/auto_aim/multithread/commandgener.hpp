@@ -4,8 +4,8 @@
 #include <optional>
 
 #include "io/gimbal/gimbal.hpp"
-#include "tasks/auto_aim/shooter.hpp"
-#include "tasks/auto_aim/tracker.hpp"
+#include "tasks/auto_aim/auto_aim_fire/shooter.hpp"
+#include "tasks/auto_aim/auto_aim_track/tracker.hpp"
 #include "tasks/omniperception/decider.hpp"
 #include "tools/plotter.hpp"
 

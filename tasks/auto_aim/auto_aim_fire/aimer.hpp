@@ -6,7 +6,7 @@
 #include <list>
 
 #include "io/command.hpp"
-#include "target.hpp"
+#include "tasks/auto_aim/auto_aim_track/target.hpp"
 
 namespace auto_aim
 {

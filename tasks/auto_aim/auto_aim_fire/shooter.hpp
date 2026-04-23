@@ -4,7 +4,7 @@
 #include <string>
 
 #include "io/command.hpp"
-#include "tasks/auto_aim/aimer.hpp"
+#include "tasks/auto_aim/auto_aim_fire/aimer.hpp"
 
 namespace auto_aim
 {

@@ -6,9 +6,9 @@
 #include <list>
 #include <string>
 
-#include "armor.hpp"
+#include "tasks/auto_aim/common/armor.hpp"
 #include "solver.hpp"
-#include "target.hpp"
+#include "tasks/auto_aim/auto_aim_track/target.hpp"
 #include "tasks/omniperception/perceptron.hpp"
 #include "tools/thread_safe_queue.hpp"
 

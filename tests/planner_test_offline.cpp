@@ -3,7 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <thread>
 
-#include "tasks/auto_aim/planner/planner.hpp"
+#include "tasks/auto_aim/auto_aim_fire/planner/planner.hpp"
 #include "tools/exiter.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"

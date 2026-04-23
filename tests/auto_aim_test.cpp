@@ -5,10 +5,10 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
 
-#include "tasks/auto_aim/aimer.hpp"
-#include "tasks/auto_aim/solver.hpp"
-#include "tasks/auto_aim/tracker.hpp"
-#include "tasks/auto_aim/yolo.hpp"
+#include "tasks/auto_aim/auto_aim_fire/aimer.hpp"
+#include "tasks/auto_aim/auto_aim_track/solver.hpp"
+#include "tasks/auto_aim/auto_aim_track/tracker.hpp"
+#include "tasks/auto_aim/auto_aim_detect/yolo.hpp"
 #include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"

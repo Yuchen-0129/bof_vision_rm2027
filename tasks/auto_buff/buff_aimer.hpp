@@ -8,7 +8,7 @@
 #include <cmath>
 #include <vector>
 
-#include "../auto_aim/planner/planner.hpp"
+#include "../auto_aim/auto_aim_fire/planner/planner.hpp"
 #include "buff_target.hpp"
 #include "buff_type.hpp"
 #include "io/command.hpp"

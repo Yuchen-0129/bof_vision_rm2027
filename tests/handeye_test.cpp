@@ -10,7 +10,7 @@
 
 #include "io/camera.hpp"
 #include "io/gimbal/gimbal.hpp"
-#include "tasks/auto_aim/solver.hpp"
+#include "tasks/auto_aim/auto_aim_track/solver.hpp"
 #include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"

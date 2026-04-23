@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <random>
 
-#include "tasks/auto_aim/classifier.hpp"
+#include "tasks/auto_aim/auto_aim_detect/classifier.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
 

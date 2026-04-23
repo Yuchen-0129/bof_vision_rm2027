@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "armor.hpp"
+#include "tasks/auto_aim/common/armor.hpp"
 #include "classifier.hpp"
 
 namespace auto_aim

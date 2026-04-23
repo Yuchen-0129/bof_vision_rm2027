@@ -5,7 +5,7 @@
 #include <openvino/openvino.hpp>
 #include <string>
 
-#include "armor.hpp"
+#include "tasks/auto_aim/common/armor.hpp"
 
 namespace auto_aim
 {

@@ -8,7 +8,7 @@
 #include <thread>
 #include <vector>
 
-#include "tasks/auto_aim/yolo.hpp"
+#include "tasks/auto_aim/auto_aim_detect/yolo.hpp"
 #include "tools/logger.hpp"
 
 namespace tools
