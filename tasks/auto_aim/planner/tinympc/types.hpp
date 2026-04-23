@@ -1,8 +1,6 @@
 #pragma once
 
-#include <Eigen/Eigen>
-// #include <Eigen/Core>
-// #include <Eigen/LU>
+#include <Eigen/Core>
 
 using namespace Eigen;
 

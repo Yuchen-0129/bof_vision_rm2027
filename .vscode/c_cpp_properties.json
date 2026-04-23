@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "sp_vision",
+            "name": "bof_vision",
             "forcedInclude": [
                 "${workspaceFolder}/.vscode/eigen_fix.h"
             ],
