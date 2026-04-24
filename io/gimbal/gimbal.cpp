@@ -1,5 +1,7 @@
 #include "gimbal.hpp"
 
+#include <iostream>
+
 #include "tools/crc.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
@@ -176,6 +178,7 @@ void Gimbal::read_thread()
     state_.bullet_speed = rx_data_.bullet_speed;
     state_.bullet_count = rx_data_.bullet_count;
     state_.enemy_color = rx_data_.enemy_color;
+    //std::cout << "[Gimbal] enemy_color: " << static_cast<int>(state_.enemy_color) << std::endl;
 
     switch (rx_data_.mode) {
       case 0:

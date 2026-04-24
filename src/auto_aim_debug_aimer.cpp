@@ -22,7 +22,7 @@ using namespace std::chrono;
 
 const std::string keys =
   "{help h usage ? |      | 输出命令行参数说明}"
-  "{@config-path   | configs/chou.yaml | 位置参数，yaml配置文件路径 }";
+  "{@config-path   | configs/sentry.yaml | 位置参数，yaml配置文件路径 }";
 
 int main(int argc, char * argv[])
 {
@@ -85,7 +85,7 @@ int main(int argc, char * argv[])
     auto armors = detector.detect(img);
 
     //跟踪目标
-    auto targets = tracker.track(armors, t);
+    auto targets = tracker.track(armors, t, gimbal_state.enemy_color);
 
     // 使用串口获取的子弹速度
     // 获取击打逻辑
