@@ -56,8 +56,18 @@ add_executable(calibrate_camera calibration/calibrate_camera.cpp)
 add_executable(calibrate_handeye calibration/calibrate_handeye.cpp)
 add_executable(calibrate_robotworld_handeye calibration/calibrate_robotworld_handeye.cpp)
 add_executable(split_video calibration/split_video.cpp)
+add_executable(capture_chessboard calibration/capture_chessboard.cpp)
+add_executable(calibrate_camera_chessboard calibration/calibrate_camera_chessboard.cpp)
+add_executable(calibrate_chessboard_handeye calibration/calibrate_chessboard_handeye.cpp)
+add_executable(
+  calibrate_robotworld_handeye_chessboard calibration/calibrate_robotworld_handeye_chessboard.cpp)
 
 target_link_libraries(capture ${OpenCV_LIBS} fmt::fmt tools io)
+target_link_libraries(capture_chessboard ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
+target_link_libraries(calibrate_camera_chessboard ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+target_link_libraries(calibrate_chessboard_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+target_link_libraries(
+  calibrate_robotworld_handeye_chessboard ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_robotworld_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
