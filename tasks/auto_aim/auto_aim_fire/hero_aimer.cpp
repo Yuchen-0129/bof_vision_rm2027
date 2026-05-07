@@ -3,6 +3,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <vector>
 
@@ -23,6 +24,8 @@ HeroAimer::HeroAimer(const std::string & config_path)
   max_shoot_angle_ = yaml["max_shoot_angle"].as<double>();
 }
 
+// 瞄准前哨站
+// hit_point_xy 是在中心连线上的点 距离中心点的距离为ekf_x[8]
 Eigen::Vector3d HeroAimer::get_outpost_hit_xyz(const Target & target) const
 {
   auto ekf_x = target.ekf_x();
@@ -36,20 +39,21 @@ Eigen::Vector3d HeroAimer::get_outpost_hit_xyz(const Target & target) const
   double z = ekf_x[4];
   const auto armors = target.armor_xyza_list();
   if (!armors.empty()) {
-    int best = 0;
+    std::size_t best = 0;
     double best_d = std::numeric_limits<double>::infinity();
-    for (size_t i = 0; i < armors.size(); ++i) {
+    for (std::size_t i = 0; i < armors.size(); ++i) {
       const double d = std::abs(tools::limit_rad(armors[i][3] - center_yaw));
       if (d < best_d) {
         best_d = d;
-        best = static_cast<int>(i);
+        best = i;
       }
     }
-    z = armors[static_cast<size_t>(best)][2];
+    z = armors[best][2];
   }
   return {hit_point_xy[0], hit_point_xy[1], z};
 }
 
+// 瞄准车子的装甲板
 Eigen::Vector3d HeroAimer::get_top_front(const Target & target_origin) const
 {
   auto ekf_x = target_origin.ekf_x();
@@ -62,8 +66,7 @@ Eigen::Vector3d HeroAimer::get_top_front(const Target & target_origin) const
   Eigen::Vector2d hit_point_xy = (horizonal_distance / center_xy.norm()) * center_xy;
 
   const auto armors = target_origin.armor_xyza_list();
-  const int armor_num = static_cast<int>(armors.size());
-  if (armor_num <= 0) {
+  if (armors.empty()) {
     return {hit_point_xy[0], hit_point_xy[1], ekf_x[4]};
   }
 
@@ -75,27 +78,25 @@ Eigen::Vector3d HeroAimer::get_top_front(const Target & target_origin) const
     return {hit_point_xy[0], hit_point_xy[1], ekf_x[4]};
   }
 
+  // 中间转速 瞄准有高度的装甲板
   const double T = 2 * M_PI / w;
   const int sig_w = w > 0 ? 1 : -1;
-  int armor_id = -1;
+  std::size_t armor_id = 0;
   double dt_min = INFINITY;
   double t = 0;
-  for (int aim_id = 0; aim_id < armor_num; aim_id++) {
+  for (std::size_t k = 0; k < armors.size(); ++k) {
+    const double ay = armors[k][3];
     if (sig_w == 1) {
-      t = (armors[static_cast<size_t>(aim_id)][3] > center_yaw)
-            ? T - (armors[static_cast<size_t>(aim_id)][3] - center_yaw) / w
-            : (center_yaw - armors[static_cast<size_t>(aim_id)][3]) / w;
+      t = (ay > center_yaw) ? T - (ay - center_yaw) / w : (center_yaw - ay) / w;
     } else {
-      t = (armors[static_cast<size_t>(aim_id)][3] < center_yaw)
-            ? T + (armors[static_cast<size_t>(aim_id)][3] - center_yaw) / w
-            : (-center_yaw + armors[static_cast<size_t>(aim_id)][3]) / w;
+      t = (ay < center_yaw) ? T + (ay - center_yaw) / w : (-center_yaw + ay) / w;
     }
     if (t < dt_min) {
-      armor_id = aim_id;
+      armor_id = k;
       dt_min = t;
     }
   }
-  return {hit_point_xy[0], hit_point_xy[1], armors[static_cast<size_t>(armor_id)][2]};
+  return {hit_point_xy[0], hit_point_xy[1], armors[armor_id][2]};
 }
 
 io::Command HeroAimer::aim(
@@ -109,11 +110,13 @@ io::Command HeroAimer::aim(
   auto target = targets.front();
   auto target_predicted = target;
   auto t_fire = timestamp;
-  if (bullet_speed <= 0.0) {
+  // 设置弹速
+  if (bullet_speed != 0.0) {
     bullet_speed = 11.8;
   }
   auto ekf_x = target_predicted.ekf_x();
 
+  // 转速过大 瞄准中心
   if (std::abs(ekf_x[7]) > 1) {
     auto target_rotate = target;
     const auto t_decide = std::chrono::steady_clock::now();
@@ -143,17 +146,17 @@ io::Command HeroAimer::aim(
                                    static_cast<int>((shoot_delay_ + trajectory0.fly_time) * 1e6));
     target_rotate.predict(t_hit);
     const auto armors_hit = target_rotate.armor_xyza_list();
-    const int armor_num = static_cast<int>(armors_hit.size());
     const int sig = ekf_x[7] < 0 ? -1 : +1;
+    // 开火区间判断
     const double error =
       (target_rotate.name == ArmorName::outpost ? 0.01 : (std::fabs(ekf_x[7]) > 5 ? 0.04 : 0.02));
     const auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
 
-    for (int aim_id = 0; aim_id < armor_num; ++aim_id) {
-      const double armor_yaw = armors_hit[static_cast<size_t>(aim_id)][3];
+    for (std::size_t k = 0; k < armors_hit.size(); ++k) {
+      const Eigen::Vector4d & ap = armors_hit[k];
+      const double armor_yaw = ap[3];
       const double yaw_err = sig * (-armor_yaw + center_yaw);
-      if (yaw_err <= error && yaw_err >= 0 &&
-          std::fabs(armors_hit[static_cast<size_t>(aim_id)][2] - xyz0[2]) <= 0.01) {
+      if (yaw_err <= error && yaw_err >= 0 && std::fabs(ap[2] - xyz0[2]) <= 0.01) {
         tools::logger()->info("########## fire ##########");
         return {true, true, yaw, pitch};
       }
@@ -221,8 +224,8 @@ io::Command HeroAimer::aim(
 HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
 {
   Eigen::VectorXd ekf_x = target.ekf_x();
-  std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
-  const auto armor_num = static_cast<int>(armor_xyza_list.size());
+  const std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
+  const std::size_t n = armor_xyza_list.size();
 
   if (!target.jumped) return {true, armor_xyza_list[0]};
 
@@ -232,18 +235,19 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
   float min1 = std::numeric_limits<float>::max();
   float min2 = std::numeric_limits<float>::max();
 
-  for (int aim_id = 0; aim_id < armor_num; aim_id++) {
-    const float delta = std::abs(armor_xyza_list[static_cast<size_t>(aim_id)][3] - center_yaw);
+  for (std::size_t i = 0; i < n; ++i) {
+    const Eigen::Vector4d & pl = armor_xyza_list[i];
+    const float delta = static_cast<float>(std::abs(pl[3] - center_yaw));
 
     if (delta < min1) {
       min2 = min1;
       second_id = first_id;
 
       min1 = delta;
-      first_id = aim_id;
+      first_id = static_cast<int>(i);
     } else if (delta < min2) {
       min2 = delta;
-      second_id = aim_id;
+      second_id = static_cast<int>(i);
     }
   }
 
@@ -251,47 +255,45 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
   float dmin1 = std::numeric_limits<float>::max();
   float dmin2 = std::numeric_limits<float>::max();
 
-  for (int aim_id = 0; aim_id < armor_num; aim_id++) {
-    const float delta =
-      armor_xyza_list[static_cast<size_t>(aim_id)][0] * armor_xyza_list[static_cast<size_t>(aim_id)][0] +
-      armor_xyza_list[static_cast<size_t>(aim_id)][1] * armor_xyza_list[static_cast<size_t>(aim_id)][1];
+  for (std::size_t i = 0; i < n; ++i) {
+    const Eigen::Vector4d & pl = armor_xyza_list[i];
+    const float delta = pl[0] * pl[0] + pl[1] * pl[1];
 
     if (delta < dmin1) {
       dmin2 = dmin1;
       dmin_second_id = dmin_first_id;
 
       dmin1 = delta;
-      dmin_first_id = aim_id;
+      dmin_first_id = static_cast<int>(i);
     } else if (delta < dmin2) {
       dmin2 = delta;
-      dmin_second_id = aim_id;
+      dmin_second_id = static_cast<int>(i);
     }
   }
 
-  const Eigen::Vector3d xyz1 = armor_xyza_list[static_cast<size_t>(first_id)].head(3);
-  const Eigen::Vector3d xyz2 = armor_xyza_list[static_cast<size_t>(second_id)].head(3);
+  const auto plate = [&armor_xyza_list](int id) -> const Eigen::Vector4d & {
+    return armor_xyza_list[static_cast<std::size_t>(id)];
+  };
+  const Eigen::Vector4d & p1 = plate(first_id);
+  const Eigen::Vector4d & p2 = plate(second_id);
+  const Eigen::Vector3d xyz1 = p1.head(3);
+  const Eigen::Vector3d xyz2 = p2.head(3);
 
   const double yaw1 = std::atan2(xyz1[1], xyz1[0]);
   const double yaw2 = std::atan2(xyz2[1], xyz2[0]);
 
-  if (first_id != dmin_first_id && first_id != dmin_second_id) return {true, armor_xyza_list[static_cast<size_t>(second_id)]};
+  if (first_id != dmin_first_id && first_id != dmin_second_id) return {true, plate(second_id)};
 
-  if (second_id != dmin_first_id && second_id != dmin_second_id) return {true, armor_xyza_list[static_cast<size_t>(first_id)]};
+  if (second_id != dmin_first_id && second_id != dmin_second_id) return {true, plate(first_id)};
 
-  if (std::abs(armor_xyza_list[static_cast<size_t>(first_id)][3] - yaw1) > max_shoot_angle_ / 57.3)
-    return {true, armor_xyza_list[static_cast<size_t>(second_id)]};
+  if (std::abs(p1[3] - yaw1) > max_shoot_angle_ / 57.3) return {true, p2};
 
-  if (std::abs(armor_xyza_list[static_cast<size_t>(second_id)][3] - yaw2) > max_shoot_angle_ / 57.3)
-    return {true, armor_xyza_list[static_cast<size_t>(first_id)]};
+  if (std::abs(p2[3] - yaw2) > max_shoot_angle_ / 57.3) return {true, p1};
 
   if (lock_id_ != first_id && lock_id_ != second_id)
-    lock_id_ =
-      (std::abs(armor_xyza_list[static_cast<size_t>(first_id)][3] - yaw1) <
-       std::abs(armor_xyza_list[static_cast<size_t>(second_id)][3] - yaw2))
-        ? first_id
-        : second_id;
+    lock_id_ = (std::abs(p1[3] - yaw1) < std::abs(p2[3] - yaw2)) ? first_id : second_id;
 
-  return {true, armor_xyza_list[static_cast<size_t>(lock_id_)]};
+  return {true, plate(lock_id_)};
 }
 
 }  // namespace auto_aim
