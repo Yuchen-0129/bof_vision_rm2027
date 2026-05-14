@@ -16,6 +16,8 @@ Gimbal::Gimbal(const std::string & config_path)
 
   try {
     serial_.setPort(com_port);
+    serial::Timeout timeout = serial::Timeout::simpleTimeout(100); // 100毫秒
+    serial_.setTimeout(timeout);
     serial_.open();
   } catch (const std::exception & e) {
     tools::logger()->error("[Gimbal] Failed to open serial: {}", e.what());
@@ -203,6 +205,108 @@ void Gimbal::read_thread()
   tools::logger()->info("[Gimbal] read_thread stopped.");
 }
 
+
+// void Gimbal::read_thread()
+// {
+//   tools::logger()->info("[Gimbal] read_thread started.");
+
+//   int error_count = 0;
+//   int fail_head_read = 0;
+//   int fail_head_wrong = 0;
+//   int fail_body_read = 0;
+//   int fail_crc = 0;
+
+//   auto last_report = std::chrono::steady_clock::now();
+
+//   while (!quit_)
+//   {
+//     // 每 3 秒报告一次当前错误统计（避免刷屏但能看到趋势）
+//     auto now = std::chrono::steady_clock::now();
+//     if (now - last_report >= std::chrono::seconds(3))
+//     {
+//       tools::logger()->info("[Gimbal] Error stats: total_err={}, head_read_fail={}, head_wrong={}, body_read_fail={}, crc_fail={}",
+//                             error_count, fail_head_read, fail_head_wrong, fail_body_read, fail_crc);
+//       last_report = now;
+//     }
+
+//     // 触发重连条件
+//     if (error_count > 5000)
+//     {
+//       tools::logger()->warn("[Gimbal] Too many errors (total={}), reconnecting. Breakdown: head_read_fail={}, head_wrong={}, body_read_fail={}, crc_fail={}",
+//                             error_count, fail_head_read, fail_head_wrong, fail_body_read, fail_crc);
+//       error_count = 0;
+//       fail_head_read = fail_head_wrong = fail_body_read = fail_crc = 0;
+//       reconnect();
+//       continue;
+//     }
+
+//     // ----- 读帧头 -----
+//     if (!read(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_.head)))
+//     {
+//       error_count++;
+//       fail_head_read++;
+//       continue;
+//     }
+
+//     // ----- 检查帧头 -----
+//     if (rx_data_.head != 0x53)
+//     {
+//       fail_head_wrong++;
+//       // 注意：这里不增加 error_count，所以不会直接导致重连
+//       continue;
+//     }
+
+//     auto t = std::chrono::steady_clock::now();
+
+//     // ----- 读剩余部分 -----
+//     if (!read(reinterpret_cast<uint8_t *>(&rx_data_.mode),
+//               sizeof(rx_data_) - sizeof(rx_data_.head)))
+//     {
+//       error_count++;
+//       fail_body_read++;
+//       continue;
+//     }
+
+//     // ----- CRC 校验 -----
+//     if (!tools::check_crc16(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_)))
+//     {
+//       fail_crc++;
+//       // CRC 错误通常不增加 error_count，但如果你希望它也触发重连，可取消下面注释
+//       // error_count++;
+//       continue;
+//     }
+
+//     // ----- 成功收到有效帧 -----
+//     error_count = 0;
+//     fail_head_read = fail_head_wrong = fail_body_read = fail_crc = 0;
+
+//     // 处理四元数
+//     Eigen::Quaterniond q(rx_data_.q[0], rx_data_.q[1], rx_data_.q[2], rx_data_.q[3]);
+//     queue_.push({q, t});
+
+//     std::lock_guard<std::mutex> lock(mutex_);
+//     state_.yaw = rx_data_.yaw;
+//     state_.yaw_vel = rx_data_.yaw_vel;
+//     state_.pitch = rx_data_.pitch;
+//     state_.pitch_vel = rx_data_.pitch_vel;
+//     state_.bullet_speed = rx_data_.bullet_speed;
+//     state_.bullet_count = rx_data_.bullet_count;
+//     state_.enemy_color = rx_data_.enemy_color;
+
+//     switch (rx_data_.mode)
+//     {
+//       case 0: mode_ = GimbalMode::IDLE; break;
+//       case 1: mode_ = GimbalMode::AUTO_AIM; break;
+//       case 2: mode_ = GimbalMode::SMALL_BUFF; break;
+//       case 3: mode_ = GimbalMode::BIG_BUFF; break;
+//       default: mode_ = GimbalMode::IDLE;
+//                tools::logger()->warn("[Gimbal] Invalid mode: {}", rx_data_.mode);
+//                break;
+//     }
+//   }
+
+//   tools::logger()->info("[Gimbal] read_thread stopped.");
+// }
 void Gimbal::reconnect()
 {
   int max_retry_count = 10;
