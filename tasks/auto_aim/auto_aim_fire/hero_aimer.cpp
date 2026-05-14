@@ -22,6 +22,7 @@ HeroAimer::HeroAimer(const std::string & config_path)
   max_fire_error_yaw_ = yaml["max_fire_error_yaw"].as<double>();
   max_fire_error_pitch_ = yaml["max_fire_error_pitch"].as<double>();
   max_shoot_angle_ = yaml["max_shoot_angle"].as<double>();
+  center_mode_w_threshold_ = yaml["center_mode_w_threshold"].as<double>(12.0);
 }
 
 // 瞄准前哨站
@@ -117,7 +118,7 @@ io::Command HeroAimer::aim(
   auto ekf_x = target_predicted.ekf_x();
 
   // 转速过大 瞄准中心
-  if (std::abs(ekf_x[7]) > 1) {
+  if (std::abs(ekf_x[7]) > 12) {
     auto target_rotate = target;
     const auto t_decide = std::chrono::steady_clock::now();
     target_rotate.predict(t_decide);
@@ -215,7 +216,7 @@ io::Command HeroAimer::aim(
 
   bool is_fire = false;
   if ((std::abs(ypr[0] - yaw) < max_fire_error_yaw_) && (std::abs(ypr[1] - pitch) < max_fire_error_pitch_)) {
-    // is_fire = true;
+    is_fire = true;
   }
 
   return {true, is_fire, yaw, pitch};
@@ -235,6 +236,7 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
   float min1 = std::numeric_limits<float>::max();
   float min2 = std::numeric_limits<float>::max();
 
+  // 选择两个距离中心最近的装甲板 yaw差值最小的两个装甲板
   for (std::size_t i = 0; i < n; ++i) {
     const Eigen::Vector4d & pl = armor_xyza_list[i];
     const float delta = static_cast<float>(std::abs(pl[3] - center_yaw));
@@ -255,6 +257,7 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
   float dmin1 = std::numeric_limits<float>::max();
   float dmin2 = std::numeric_limits<float>::max();
 
+  // 选择两个距离中心最近的装甲板 xy差值最小的两个装甲板
   for (std::size_t i = 0; i < n; ++i) {
     const Eigen::Vector4d & pl = armor_xyza_list[i];
     const float delta = pl[0] * pl[0] + pl[1] * pl[1];
@@ -271,6 +274,7 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
     }
   }
 
+  // 
   const auto plate = [&armor_xyza_list](int id) -> const Eigen::Vector4d & {
     return armor_xyza_list[static_cast<std::size_t>(id)];
   };
@@ -282,14 +286,19 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
   const double yaw1 = std::atan2(xyz1[1], xyz1[0]);
   const double yaw2 = std::atan2(xyz2[1], xyz2[0]);
 
+  // 如果第一个装甲板不是xy差值最小的两个装甲板中的一个，则返回第二个装甲板
   if (first_id != dmin_first_id && first_id != dmin_second_id) return {true, plate(second_id)};
 
+  // 如果第二个装甲板不是xy差值最小的两个装甲板中的一个，则返回第一个装甲板
   if (second_id != dmin_first_id && second_id != dmin_second_id) return {true, plate(first_id)};
 
+  // 如果第一个装甲板的yaw差值大于最大射击角度，则返回第二个装甲板
   if (std::abs(p1[3] - yaw1) > max_shoot_angle_ / 57.3) return {true, p2};
 
+  // 如果第二个装甲板的yaw差值大于最大射击角度，则返回第一个装甲板
   if (std::abs(p2[3] - yaw2) > max_shoot_angle_ / 57.3) return {true, p1};
 
+  // 如果第一个装甲板和第二个装甲板的yaw差值都小于最大射击角度，则返回yaw差值较小的装甲板
   if (lock_id_ != first_id && lock_id_ != second_id)
     lock_id_ = (std::abs(p1[3] - yaw1) < std::abs(p2[3] - yaw2)) ? first_id : second_id;
 

@@ -33,7 +33,11 @@ public:
 
   HeroAimPoint debug_aim_point_;
 
+  /** 与 aim() 中「转速过大瞄中心」分支一致，单位 rad/s */
+  double center_mode_w_threshold() const { return center_mode_w_threshold_; }
+
 private:
+  double center_mode_w_threshold_;
   double shoot_delay_;
   double yaw_offset_;
   double pitch_offset_;

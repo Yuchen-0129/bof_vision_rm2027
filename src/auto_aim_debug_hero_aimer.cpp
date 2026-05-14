@@ -1,6 +1,7 @@
 #include <fmt/core.h>
 
 #include <chrono>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
 
@@ -122,6 +123,22 @@ int main(int argc, char * argv[])
         tools::draw_text(
           img, fmt::format("{}", i), {static_cast<int>(rx) - 8, static_cast<int>(ty) + 18},
           {0, 255, 255}, 1.2, 2);
+      }
+
+      // EKF 旋转中心 (x,y,z) → 像素；|w| 超过 hero 瞄中心阈值时红圈，否则绿圈
+      {
+        Eigen::VectorXd xc = target.ekf_x();
+        const bool aim_center_mode = std::abs(xc[7]) > hero_aimer.center_mode_w_threshold();
+        const std::vector<cv::Point3f> center_world{cv::Point3f(
+          static_cast<float>(xc[0]), static_cast<float>(xc[2]), static_cast<float>(xc[4]))};
+        auto center_px = solver.world2pixel(center_world);
+        if (!center_px.empty()) {
+          const auto & p = center_px[0];
+          const cv::Scalar color = aim_center_mode ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+          cv::circle(
+            img, cv::Point(static_cast<int>(p.x + 0.5f), static_cast<int>(p.y + 0.5f)), 14, color,
+            2);
+        }
       }
 
       auto aim_point = hero_aimer.debug_aim_point_;

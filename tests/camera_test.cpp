@@ -35,6 +35,8 @@ int main(int argc, char * argv[])
     last_stamp = timestamp;
 
     tools::logger()->info("{:.2f} fps", 1 / dt);
+    cv::resize(img, img, {}, 0.5, 0.5);
+
 
     //if (!display) continue;
     cv::imshow("img", img);
