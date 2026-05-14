@@ -32,6 +32,9 @@ add_subdirectory(tests/sp_examples)
 add_executable(auto_aim_debug_aimer src/auto_aim_debug_aimer.cpp)
 target_link_libraries(auto_aim_debug_aimer ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 
+add_executable(auto_aim_debug_hero_aimer src/auto_aim_debug_hero_aimer.cpp)
+target_link_libraries(auto_aim_debug_hero_aimer ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+
 ##################calibration################
 add_executable(capture calibration/capture.cpp)
 add_executable(calibrate_camera calibration/calibrate_camera.cpp)
