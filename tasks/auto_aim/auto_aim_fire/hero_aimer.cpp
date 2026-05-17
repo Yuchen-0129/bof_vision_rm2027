@@ -222,87 +222,137 @@ io::Command HeroAimer::aim(
   return {true, is_fire, yaw, pitch};
 }
 
+// HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
+// {
+//   Eigen::VectorXd ekf_x = target.ekf_x();
+//   const std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
+//   const std::size_t n = armor_xyza_list.size();
+
+//   if (!target.jumped) return {true, armor_xyza_list[0]};
+
+//   const auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
+
+//   int first_id = -1, second_id = -1;
+//   float min1 = std::numeric_limits<float>::max();
+//   float min2 = std::numeric_limits<float>::max();
+
+//   // 选择两个距离中心最近的装甲板 yaw差值最小的两个装甲板
+//   for (std::size_t i = 0; i < n; ++i) {
+//     const Eigen::Vector4d & pl = armor_xyza_list[i];
+//     const float delta = static_cast<float>(std::abs(pl[3] - center_yaw));
+
+//     if (delta < min1) {
+//       min2 = min1;
+//       second_id = first_id;
+
+//       min1 = delta;
+//       first_id = static_cast<int>(i);
+//     } else if (delta < min2) {
+//       min2 = delta;
+//       second_id = static_cast<int>(i);
+//     }
+//   }
+
+//   int dmin_first_id = -1, dmin_second_id = -1;
+//   float dmin1 = std::numeric_limits<float>::max();
+//   float dmin2 = std::numeric_limits<float>::max();
+
+//   // 选择两个距离中心最近的装甲板 xy差值最小的两个装甲板
+//   for (std::size_t i = 0; i < n; ++i) {
+//     const Eigen::Vector4d & pl = armor_xyza_list[i];
+//     const float delta = pl[0] * pl[0] + pl[1] * pl[1];
+
+//     if (delta < dmin1) {
+//       dmin2 = dmin1;
+//       dmin_second_id = dmin_first_id;
+
+//       dmin1 = delta;
+//       dmin_first_id = static_cast<int>(i);
+//     } else if (delta < dmin2) {
+//       dmin2 = delta;
+//       dmin_second_id = static_cast<int>(i);
+//     }
+//   }
+
+//   // 
+//   const auto plate = [&armor_xyza_list](int id) -> const Eigen::Vector4d & {
+//     return armor_xyza_list[static_cast<std::size_t>(id)];
+//   };
+//   const Eigen::Vector4d & p1 = plate(first_id);
+//   const Eigen::Vector4d & p2 = plate(second_id);
+//   const Eigen::Vector3d xyz1 = p1.head(3);
+//   const Eigen::Vector3d xyz2 = p2.head(3);
+
+//   const double yaw1 = std::atan2(xyz1[1], xyz1[0]);
+//   const double yaw2 = std::atan2(xyz2[1], xyz2[0]);
+
+//   // 如果第一个装甲板不是xy差值最小的两个装甲板中的一个，则返回第二个装甲板
+//   if (first_id != dmin_first_id && first_id != dmin_second_id) return {true, plate(second_id)};
+
+//   // 如果第二个装甲板不是xy差值最小的两个装甲板中的一个，则返回第一个装甲板
+//   if (second_id != dmin_first_id && second_id != dmin_second_id) return {true, plate(first_id)};
+
+//   // 如果第一个装甲板的yaw差值大于最大射击角度，则返回第二个装甲板
+//   if (std::abs(p1[3] - yaw1) > max_shoot_angle_ / 57.3) return {true, p2};
+
+//   // 如果第二个装甲板的yaw差值大于最大射击角度，则返回第一个装甲板
+//   if (std::abs(p2[3] - yaw2) > max_shoot_angle_ / 57.3) return {true, p1};
+
+//   // 如果第一个装甲板和第二个装甲板的yaw差值都小于最大射击角度，则返回yaw差值较小的装甲板
+//   if (lock_id_ != first_id && lock_id_ != second_id)
+//     lock_id_ = (std::abs(p1[3] - yaw1) < std::abs(p2[3] - yaw2)) ? first_id : second_id;
+
+//   return {true, plate(lock_id_)};
+// }
+
 HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
 {
-  Eigen::VectorXd ekf_x = target.ekf_x();
   const std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
-  const std::size_t n = armor_xyza_list.size();
-
+  const auto armor_num = armor_xyza_list.size();
   if (!target.jumped) return {true, armor_xyza_list[0]};
 
-  const auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
+  const double shoot_angle = max_shoot_angle_ / 57.3;
 
-  int first_id = -1, second_id = -1;
-  float min1 = std::numeric_limits<float>::max();
-  float min2 = std::numeric_limits<float>::max();
-
-  // 选择两个距离中心最近的装甲板 yaw差值最小的两个装甲板
-  for (std::size_t i = 0; i < n; ++i) {
+  // 板面 yaw 相对视线方位角的偏差，|delta| 越小越正对射手
+  std::vector<double> delta_angle_list;
+  delta_angle_list.reserve(armor_num);
+  for (std::size_t i = 0; i < armor_num; ++i) {
     const Eigen::Vector4d & pl = armor_xyza_list[i];
-    const float delta = static_cast<float>(std::abs(pl[3] - center_yaw));
+    const double los_yaw = std::atan2(pl[1], pl[0]);
+    delta_angle_list.push_back(tools::limit_rad(pl[3] - los_yaw));
+  }
 
-    if (delta < min1) {
-      min2 = min1;
-      second_id = first_id;
+  // xy 平面距离最近的两块装甲板
+  int nearest_id = 0;
+  int second_nearest_id = -1;
+  float min_dist1 = std::numeric_limits<float>::max();
+  float min_dist2 = std::numeric_limits<float>::max();
+  for (std::size_t i = 0; i < armor_num; ++i) {
+    const Eigen::Vector4d & pl = armor_xyza_list[i];
+    const float dist_sq = static_cast<float>(pl[0] * pl[0] + pl[1] * pl[1]);
 
-      min1 = delta;
-      first_id = static_cast<int>(i);
-    } else if (delta < min2) {
-      min2 = delta;
-      second_id = static_cast<int>(i);
+    if (dist_sq < min_dist1) {
+      min_dist2 = min_dist1;
+      second_nearest_id = nearest_id;
+
+      min_dist1 = dist_sq;
+      nearest_id = static_cast<int>(i);
+    } else if (dist_sq < min_dist2) {
+      min_dist2 = dist_sq;
+      second_nearest_id = static_cast<int>(i);
     }
   }
 
-  int dmin_first_id = -1, dmin_second_id = -1;
-  float dmin1 = std::numeric_limits<float>::max();
-  float dmin2 = std::numeric_limits<float>::max();
+  const int id0 = nearest_id;
+  const int id1 = (second_nearest_id < 0) ? nearest_id : second_nearest_id;
+  const int best_id =
+    (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
 
-  // 选择两个距离中心最近的装甲板 xy差值最小的两个装甲板
-  for (std::size_t i = 0; i < n; ++i) {
-    const Eigen::Vector4d & pl = armor_xyza_list[i];
-    const float delta = pl[0] * pl[0] + pl[1] * pl[1];
-
-    if (delta < dmin1) {
-      dmin2 = dmin1;
-      dmin_second_id = dmin_first_id;
-
-      dmin1 = delta;
-      dmin_first_id = static_cast<int>(i);
-    } else if (delta < dmin2) {
-      dmin2 = delta;
-      dmin_second_id = static_cast<int>(i);
-    }
+  if (std::abs(delta_angle_list[best_id]) > shoot_angle) {
+    tools::logger()->warn("[HeroAimer] Empty id list!");
+    return {false, armor_xyza_list[0]};
   }
-
-  // 
-  const auto plate = [&armor_xyza_list](int id) -> const Eigen::Vector4d & {
-    return armor_xyza_list[static_cast<std::size_t>(id)];
-  };
-  const Eigen::Vector4d & p1 = plate(first_id);
-  const Eigen::Vector4d & p2 = plate(second_id);
-  const Eigen::Vector3d xyz1 = p1.head(3);
-  const Eigen::Vector3d xyz2 = p2.head(3);
-
-  const double yaw1 = std::atan2(xyz1[1], xyz1[0]);
-  const double yaw2 = std::atan2(xyz2[1], xyz2[0]);
-
-  // 如果第一个装甲板不是xy差值最小的两个装甲板中的一个，则返回第二个装甲板
-  if (first_id != dmin_first_id && first_id != dmin_second_id) return {true, plate(second_id)};
-
-  // 如果第二个装甲板不是xy差值最小的两个装甲板中的一个，则返回第一个装甲板
-  if (second_id != dmin_first_id && second_id != dmin_second_id) return {true, plate(first_id)};
-
-  // 如果第一个装甲板的yaw差值大于最大射击角度，则返回第二个装甲板
-  if (std::abs(p1[3] - yaw1) > max_shoot_angle_ / 57.3) return {true, p2};
-
-  // 如果第二个装甲板的yaw差值大于最大射击角度，则返回第一个装甲板
-  if (std::abs(p2[3] - yaw2) > max_shoot_angle_ / 57.3) return {true, p1};
-
-  // 如果第一个装甲板和第二个装甲板的yaw差值都小于最大射击角度，则返回yaw差值较小的装甲板
-  if (lock_id_ != first_id && lock_id_ != second_id)
-    lock_id_ = (std::abs(p1[3] - yaw1) < std::abs(p2[3] - yaw2)) ? first_id : second_id;
-
-  return {true, plate(lock_id_)};
+  return {true, armor_xyza_list[best_id]};
 }
 
 }  // namespace auto_aim

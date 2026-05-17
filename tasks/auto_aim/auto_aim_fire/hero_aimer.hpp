@@ -44,7 +44,6 @@ private:
   double max_fire_error_yaw_;
   double max_fire_error_pitch_;
   double max_shoot_angle_;
-  int lock_id_ = -1;
 
   HeroAimPoint choose_aim_point(const Target & target);
 };
