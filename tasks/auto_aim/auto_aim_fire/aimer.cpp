@@ -185,16 +185,37 @@ AimPoint Aimer::choose_aim_point(const Target & target)
     // 排除已经转走太远的（避免打后面）
     if (sig_w > 0 && delta_angle_list[i] >= leaving_angle) continue;
     if (sig_w < 0 && delta_angle_list[i] <= -leaving_angle) continue;
-    // score = sig_w * delta_angle: 越负 = 越前面（即将转正）；正值 = 已经过正
-    // 我们想要"最前面或最接近正对" = score 最小（最负）
     double score = sig_w * delta_angle_list[i];
     if (score < best_score) {
       best_score = score;
       best_id = i;
     }
   }
-  if (best_id >= 0) return {true, armor_xyza_list[best_id]};
 
+  // 锁定模式：lock_id 仍然在范围内就继续锁，避免两板边界反复切换导致 cmd 抖动
+  // （症状：弹打在两板中间）
+  if (lock_id_ >= 0 && lock_id_ < (int)armor_num) {
+    const double dl = delta_angle_list[lock_id_];
+    const bool lock_still_valid =
+      std::abs(dl) <= coming_angle &&
+      !(sig_w > 0 && dl >= leaving_angle) &&
+      !(sig_w < 0 && dl <= -leaving_angle);
+    if (lock_still_valid) {
+      // 只有当新候选的 score 比 lock 的 score "明显好"才换板（加 hysteresis）
+      const double lock_score = sig_w * dl;
+      const double hysteresis = 10.0 / 57.3;  // 10° 滞回，避免边界抖动
+      if (best_id < 0 || (best_score + hysteresis > lock_score)) {
+        return {true, armor_xyza_list[lock_id_]};
+      }
+    }
+  }
+
+  if (best_id >= 0) {
+    lock_id_ = best_id;
+    return {true, armor_xyza_list[best_id]};
+  }
+
+  lock_id_ = -1;
   return {false, armor_xyza_list[0]};
 }
 
