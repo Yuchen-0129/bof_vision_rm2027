@@ -76,6 +76,8 @@ first_tolerance: 5 # 近距离射击容差，degree
 second_tolerance: 2 # 远距离射击容差，degree
 judge_distance: 3 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
+min_fire_interval: 0.1 # s, 两次开火最小间隔（防疯狂射击）
+max_plate_yaw_for_fire: 25 # degree, 板法线相对视线最大允许偏角（防侧倾跳弹）
 
 #####-----decider参数-----#####
 mode: 1
