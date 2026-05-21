@@ -194,7 +194,9 @@ int main(int argc, char * argv[])
 
 
     data["cmd_yaw"] = command.yaw*57.3;
-    data["cmdl_pitch"] = command.pitch*57.3;
+    data["cmd_pitch"] = command.pitch*57.3;
+    data["cmd_shoot"] = command.shoot ? 1 : 0;     // PlotJuggler 看是否在开火（0/1 方波）
+    data["cmd_control"] = command.control ? 1 : 0; // 是否在跟踪控制
 
 
     plotter.plot(data);
