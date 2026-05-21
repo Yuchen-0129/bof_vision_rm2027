@@ -106,12 +106,10 @@ void Target::predict(double dt)
   // https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/07-Kalman-Filter-Math.ipynb
   double v1, v2, q_l, q_h;
   if (name == ArmorName::outpost) {
-    v1 = 10;   // 前哨站加速度方差
-    v2 = 0.1;  // 前哨站角加速度方差
-    q_l = 1;   // 前哨站高度差1的过程噪声（设为0，强制无高度差）
-    q_h = 1;   // 前哨站高度差2的过程噪声（设为0，强制无高度差）
-
-    
+    v1 = 10;     // 前哨站加速度方差
+    v2 = 0.05;   // 前哨站角加速度方差（转速锁更死）
+    q_l = 0;     // 高度阶梯由 DZ 表给出，l/h 不再更新
+    q_h = 0;
   } else {
     v1 = 100;  // 加速度方差
     v2 = 400;  // 角加速度方差
@@ -154,9 +152,10 @@ void Target::predict(double dt)
   };
 
   
-  // 前哨站转速特判
-  if (this->convergened() && this->name == ArmorName::outpost && std::abs(this->ekf_.x[7]) > 2)
-    this->ekf_.x[7] = this->ekf_.x[7] > 0 ? 2.51 : -2.51;
+  // 前哨站转速钳位：sign(w) 一旦锁定就钉到 ±2.51
+  if (this->name == ArmorName::outpost && this->outpost_w_sign_locked_) {
+    this->ekf_.x[7] = (this->ekf_.x[7] > 0) ? 2.51 : -2.51;
+  }
 
   
     ekf_.predict(F, Q, f);
@@ -209,6 +208,64 @@ void Target::update(const Armor & armor)
   }
 
   if (is_switch_) switch_count_++;
+
+  // 前哨站：在更新 last_id 之前识别旋转方向和相位
+  if (name == ArmorName::outpost && is_switch_ && update_count_ >= 1) {
+    // 锁定 sign(w)：EKF 中 id 按 yaw 递增（CCW 为正方向）
+    // last_id -> id 顺序为 (id - last_id) mod 3，1 = CCW(w>0)，2 = CW(w<0)
+    if (!outpost_w_sign_locked_) {
+      int delta = ((id - last_id) % 3 + 3) % 3;
+      ekf_.x[7] = (delta == 1) ? +2.51 : -2.51;
+      outpost_w_sign_locked_ = true;
+      tools::logger()->info(
+        "[Target] outpost w sign locked: w = {:.2f} (last_id={}, id={})",
+        ekf_.x[7], last_id, id);
+    }
+
+    // 累积当前观测到 outpost_z_obs_[id]（用世界坐标系下的 z）
+    outpost_z_obs_[id].push_back(armor.xyz_in_world[2]);
+    // 控制大小，避免无限增长
+    if (outpost_z_obs_[id].size() > 32) outpost_z_obs_[id].erase(outpost_z_obs_[id].begin());
+
+    // 锁定 phase：要求至少两块不同 id 都有观测，做最小二乘选 phase*
+    if (!outpost_phase_locked_) {
+      int seen = 0;
+      for (auto & v : outpost_z_obs_) if (!v.empty()) seen++;
+      if (seen >= 2) {
+        // 对每个候选 phase 求 z_c 的最小二乘解，再计算残差
+        int best_phi = 0;
+        double best_err = 1e18;
+        double best_zc = ekf_.x[4];
+        for (int p = 0; p < 3; p++) {
+          // z_obs - DZ[p][k] 在所有观测上的均值即 z_c 的 LS 解
+          double sum = 0;
+          int n = 0;
+          for (int k = 0; k < 3; k++) {
+            for (double z : outpost_z_obs_[k]) {
+              sum += (z - OUTPOST_DZ[p][k]);
+              n++;
+            }
+          }
+          if (n == 0) continue;
+          double zc = sum / n;
+          double err = 0;
+          for (int k = 0; k < 3; k++) {
+            for (double z : outpost_z_obs_[k]) {
+              double r = z - (zc + OUTPOST_DZ[p][k]);
+              err += r * r;
+            }
+          }
+          if (err < best_err) { best_err = err; best_phi = p; best_zc = zc; }
+        }
+        outpost_phase_ = best_phi;
+        outpost_phase_locked_ = true;
+        ekf_.x[4] = best_zc;  // 把 z_c 直接拉到 LS 解
+        tools::logger()->info(
+          "[Target] outpost phase locked: phase={}, z_c={:.3f}, rms={:.3f}",
+          best_phi, best_zc, std::sqrt(best_err));
+      }
+    }
+  }
 
   last_id = id;
   update_count_++;
@@ -302,10 +359,8 @@ bool Target::diverged() const
   // if (r_ok && l_ok) return false;
 
   if (name == ArmorName::outpost) {
-    // 前哨站：检查高度差是否合理
-    auto dz1_ok = std::abs(ekf_.x[9]) < 0.5;  // 高度差1的合理范围
-    auto dz2_ok = std::abs(ekf_.x[10]) < 0.5; // 高度差2的合理范围
-    if (r_ok && dz1_ok && dz2_ok) return false;
+    // 前哨站：高度阶梯由 DZ 表给出，不再依赖 l/h；只看 r 是否合理
+    if (r_ok) return false;
 } else {
     // 4装甲板：检查半径差
     auto l_ok = ekf_.x[8] + ekf_.x[9] > 0.05 && ekf_.x[8] + ekf_.x[9] < 0.5;
@@ -324,8 +379,10 @@ bool Target::convergened()
     is_converged_ = true;
   }
 
-  //前哨站特殊判断
-  if (this->name == ArmorName::outpost && update_count_ > 10 && !this->diverged()) {
+  //前哨站：phase 锁定且 update_count_ > 4 即可视为收敛
+  if (
+    this->name == ArmorName::outpost && this->outpost_phase_locked_ &&
+    update_count_ > 4 && !this->diverged()) {
     is_converged_ = true;
   }
 
@@ -371,14 +428,14 @@ Eigen::MatrixXd Target::h_jacobian(const Eigen::VectorXd & x, int id) const
   auto dy_dl = (use_l_h) ? -std::sin(angle) : 0.0;// 半径差对y的偏导
 
   auto dz_dh = (use_l_h) ? 1.0 : 0.0;// 高度对z的偏导
-  auto dz_dl_outpost = (outpost && id == 1) ? 1.0 : 0.0;  // 前哨站高度差1 (x[9])
-  auto dz_dh_outpost = (outpost && id == 2) ? 1.0 : 0.0;  // 前哨站高度差2 (x[10])
+  // 前哨站新模型：z 偏移 DZ[phase][id] 是常量，对 x[9]/x[10] 偏导为 0
+  (void)outpost;
 
   // clang-format off
   Eigen::MatrixXd H_armor_xyza{
     {1, 0, 0, 0, 0, 0, dx_da, 0, dx_dr, dx_dl,     0},
     {0, 0, 1, 0, 0, 0, dy_da, 0, dy_dr, dy_dl,     0},
-    {0, 0, 0, 0, 1, 0,     0, 0,     0,     dz_dl_outpost, dz_dh_outpost + dz_dh},
+    {0, 0, 0, 0, 1, 0,     0, 0,     0,     0,     dz_dh},
     {0, 0, 0, 0, 0, 0,     1, 0,     0,     0,     0}
   };
   // clang-format on

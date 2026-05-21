@@ -14,6 +14,16 @@
 namespace auto_aim
 {
 
+// 前哨站三块装甲板的高度阶梯（顺时针 1→2→3 高度递增 10.2cm）
+// EKF 中 id 按 yaw 递增（CCW），对应 CCW 序列 L→H→M
+// DZ[phase][id] = 在相位 phase 下，EKF id 号板相对 L 板的 z 偏移
+constexpr double OUTPOST_STEP = 0.102;  // m
+constexpr double OUTPOST_DZ[3][3] = {
+  {0.0,             2 * OUTPOST_STEP, OUTPOST_STEP    },  // phase=0: plate-0 = L
+  {2 * OUTPOST_STEP, OUTPOST_STEP,    0.0             },  // phase=1: plate-0 = H
+  {OUTPOST_STEP,    0.0,              2 * OUTPOST_STEP},  // phase=2: plate-0 = M
+};
+
 // 瞄准的目标
 class Target
 {
@@ -63,12 +73,20 @@ public:
 
   bool checkinit();
 
+  // 前哨站相位（plate-0 当前对应 L/H/M 中哪一阶）和旋转方向锁定状态
+  bool outpost_phase_locked_ = false;
+  bool outpost_w_sign_locked_ = false;
+  int outpost_phase_ = 0;
+
 private:
   int armor_num_;// 装甲板数量
   int switch_count_;// 切换次数
   int update_count_;// 更新次数
 
   bool is_switch_, is_converged_;// 是否切换, 是否收敛
+
+  // 前哨站 phase 识别用：每块板的 z 观测累积（最后 N 次）
+  std::vector<std::vector<double>> outpost_z_obs_{3};
 
   tools::ExtendedKalmanFilter ekf_;// 扩展卡尔曼滤波器
   std::chrono::steady_clock::time_point t_;// 时间点
@@ -82,9 +100,11 @@ private:
   // 
   Eigen::MatrixXd h_jacobian(const Eigen::VectorXd & x, int id) const;
 
+  // 新模型下 z_c (x[4]) 表示 L 板高度，三块板 z = z_c + DZ[phase][id]
   double getoutpost_armor_z(int id, const Eigen::VectorXd x) const {
-    return (id == 0) ? x[4] : (id == 1) ? x[4] + x[9] : (id == 2) ? x[4] + x[10] : x[4];
-}
+    if (id < 0 || id > 2) return x[4];
+    return x[4] + OUTPOST_DZ[outpost_phase_][id];
+  }
 };
 
 }  // namespace auto_aim
