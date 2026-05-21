@@ -330,11 +330,11 @@ void Target::update_ypda(const Armor & armor, int id)
   auto center_yaw = std::atan2(armor.xyz_in_world[1], armor.xyz_in_world[0]);
   auto delta_angle = tools::limit_rad(armor.ypr_in_world[0] - center_yaw);
   // R[1] 是 pitch 通道（垂直方向），影响 z 估计
-  // 前哨站 phase 锁定前，pitch 残差可能高达 10cm（DZ 错配），
-  // 必须把 R[1] 调大让 EKF 暂时不信 z 观测，否则会发散
+  // 前哨站 phase 锁定前，pitch 残差可能高达 10cm（DZ 错配），完全忽略 z 观测；
+  // 锁定后 z 残差仍有 5-10cm 量级（PnP 暗光噪声），R 给宽一些防止周期性 NIS 失败
   double R_pitch = 4e-3;
-  if (name == ArmorName::outpost && !outpost_phase_locked_) {
-    R_pitch = 1.0;  // 极大值，相当于"忽略 z 观测"
+  if (name == ArmorName::outpost) {
+    R_pitch = outpost_phase_locked_ ? 5e-2 : 1.0;
   }
   Eigen::VectorXd R_dig{
     {4e-3, R_pitch, log(std::abs(delta_angle) + 1) + 1, log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2}};

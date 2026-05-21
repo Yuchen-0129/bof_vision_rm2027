@@ -214,8 +214,27 @@ io::Command HeroAimer::aim(
   const double yaw = std::atan2(xyz1[1], xyz1[0]) + yaw_offset_;
   const double pitch = -(trajectory1.pitch + pitch_offset_);
 
+  // 开火三道闸：(1) 云台对齐  (2) 命中时板正对  (3) 板正在转过来
   bool is_fire = false;
-  if ((std::abs(ypr[0] - yaw) < max_fire_error_yaw_) && (std::abs(ypr[1] - pitch) < max_fire_error_pitch_)) {
+  const bool gimbal_aligned =
+    std::abs(ypr[0] - yaw) < max_fire_error_yaw_ &&
+    std::abs(ypr[1] - pitch) < max_fire_error_pitch_;
+
+  // 命中时刻 aim_point 板法线相对视线的偏角
+  const Eigen::VectorXd ekf_x_hit = target_predicted.ekf_x();
+  const double w_hit = ekf_x_hit[7];
+  const int sig_w_hit = (w_hit >= 0) ? +1 : -1;
+  const double aim_los = std::atan2(aim_point1.xyza[1], aim_point1.xyza[0]);
+  const double aim_delta = tools::limit_rad(aim_point1.xyza[3] - aim_los);
+
+  // 板正对：命中时 |delta_angle| < max_shoot_angle / 2，更严格
+  const bool plate_facing = std::abs(aim_delta) < (max_shoot_angle_ / 2.0) / 57.3;
+
+  // 板正在转过来 / 刚刚正对：sig_w * aim_delta <= 一点点容忍
+  // （> 0 意味着已过正在转走，越大越后面）
+  const bool plate_approaching = (sig_w_hit * aim_delta) <= (5.0 / 57.3);
+
+  if (gimbal_aligned && plate_facing && plate_approaching) {
     is_fire = true;
   }
 
@@ -345,8 +364,32 @@ HeroAimPoint HeroAimer::choose_aim_point(const Target & target)
 
   const int id0 = nearest_id;
   const int id1 = (second_nearest_id < 0) ? nearest_id : second_nearest_id;
-  const int best_id =
-    (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
+
+  // 前面板优先：用 sign(w) 判断"正在转过来"那一块
+  // delta_angle 是板法线相对视线的偏角；
+  // - w > 0 (CCW)：板 yaw 在递增 → delta_angle < 0 是即将转正（前面板）
+  // - w < 0 (CW) ：delta_angle > 0 是前面板
+  // 飞行时间内板法线还会再转 |w|*fly_time（约 0.5rad），所以打前面板才能在命中时正撞
+  const Eigen::VectorXd ekf_x = target.ekf_x();
+  const double w = ekf_x[7];
+  const int sig_w = (w >= 0) ? +1 : -1;
+
+  // s < 0 表示在转过来方向；越负 = 越靠"刚开始转过来"，越接近 0 = 越接近正对
+  const double s0 = sig_w * delta_angle_list[id0];
+  const double s1 = sig_w * delta_angle_list[id1];
+
+  int best_id;
+  if (s0 <= 0 && s1 > 0) {
+    best_id = id0;  // 只有 id0 在前面/正对
+  } else if (s1 <= 0 && s0 > 0) {
+    best_id = id1;  // 只有 id1 在前面/正对
+  } else if (s0 <= 0 && s1 <= 0) {
+    // 两块都在前面：选更接近正对（s 较大、即 |delta| 较小）那块
+    best_id = (s0 > s1) ? id0 : id1;
+  } else {
+    // 两块都已经过正（在后面）：选 |delta| 较小的兜底，但加 warn
+    best_id = (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
+  }
 
   if (std::abs(delta_angle_list[best_id]) > shoot_angle) {
     tools::logger()->warn("[HeroAimer] Empty id list!");

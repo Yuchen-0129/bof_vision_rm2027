@@ -92,10 +92,12 @@ std::list<Target> Tracker::track(
   }
 
   // 收敛效果检测：
+  // 前哨站 r/w/phase 都被强约束，PnP 残差稍大就容易触发 NIS 失败，放宽阈值
+  double nis_thresh = (target_.name == ArmorName::outpost) ? 0.7 : 0.4;
   if (
     std::accumulate(
       target_.ekf().recent_nis_failures.begin(), target_.ekf().recent_nis_failures.end(), 0) >=
-    (0.4 * target_.ekf().window_size)) {
+    (nis_thresh * target_.ekf().window_size)) {
     tools::logger()->debug("[Target] Bad Converge Found!");
     state_ = "lost";
     return {};
