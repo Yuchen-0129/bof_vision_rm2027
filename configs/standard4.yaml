@@ -47,12 +47,12 @@ high_speed_delay_time: 0.12 # s
 low_speed_delay_time: 0.12 # s
 
 #####-----shooter参数-----#####
-first_tolerance: 1.5 # 近距离射击容差，degree（5m 处 ~13cm，板宽量级）
-second_tolerance: 1.0 # 远距离射击容差，degree
+first_tolerance: 3.0 # 近距离射击容差，degree（放宽换弹频）
+second_tolerance: 2.0 # 远距离射击容差，degree
 judge_distance: 2 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
-min_fire_interval: 0.20 # s, 两次开火最小间隔（5 发/秒上限，防泼水）
-max_plate_yaw_for_fire: 45 # degree, 板法线相对视线最大允许偏角（防侧倾跳弹）
+min_fire_interval: 0.08 # s, 12.5 发/秒，接近摩擦轮硬件供弹上限
+max_plate_yaw_for_fire: 45 # degree, 板法线相对视线最大允许偏角
 
 camera_name: "hikrobot"
 exposure_ms: 5.2
