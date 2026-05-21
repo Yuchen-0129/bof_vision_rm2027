@@ -107,7 +107,9 @@ void Target::predict(double dt)
   double v1, v2, q_l, q_h;
   if (name == ArmorName::outpost) {
     v1 = 10;     // 前哨站加速度方差
-    v2 = 0.05;   // 前哨站角加速度方差（转速锁更死）
+    // 关键：phase/w 锁定前 v2 必须大，否则 EKF 跟不上 2.5rad/s 的转速
+    // 锁定后 v2 调小，让 w 稳定在 ±2.51 附近
+    v2 = outpost_w_sign_locked_ ? 0.05 : 5.0;
     q_l = 0;     // 高度阶梯由 DZ 表给出，l/h 不再更新
     q_h = 0;
   } else {
@@ -193,6 +195,12 @@ void Target::update(const Armor & armor)
     auto angle_error = std::abs(tools::limit_rad(armor.ypr_in_world[0] - xyza[3])) +
                        std::abs(tools::limit_rad(armor.ypd_in_world[0] - ypd[0]));
 
+    // 前哨站 phase 锁定后，加入 z 残差作为额外鉴别（10cm 高度差区分度极高）
+    if (name == ArmorName::outpost && outpost_phase_locked_) {
+      double z_pred = ekf_.x[4] + OUTPOST_DZ[outpost_phase_][xyza_i_list[i].second];
+      angle_error += 2.0 * std::abs(armor.xyz_in_world[2] - z_pred);  // 权重 2/m
+    }
+
     if (std::abs(angle_error) < std::abs(min_angle_error)) {
       id = xyza_i_list[i].second;
       min_angle_error = angle_error;
@@ -209,29 +217,43 @@ void Target::update(const Armor & armor)
 
   if (is_switch_) switch_count_++;
 
-  // 前哨站：在更新 last_id 之前识别旋转方向和相位
-  if (name == ArmorName::outpost && is_switch_ && update_count_ >= 1) {
-    // 锁定 sign(w)：EKF 中 id 按 yaw 递增（CCW 为正方向）
-    // last_id -> id 顺序为 (id - last_id) mod 3，1 = CCW(w>0)，2 = CW(w<0)
-    if (!outpost_w_sign_locked_) {
+  // 前哨站：识别旋转方向和相位
+  if (name == ArmorName::outpost && update_count_ >= 1) {
+    // 锁定 sign(w)：要求 EKF 已经足够稳定（update_count > 20 + |w_ekf| > 0.5）
+    // 否则第一次"假切板"会把方向锁错
+    if (
+      !outpost_w_sign_locked_ && is_switch_ && update_count_ >= 20 &&
+      std::abs(ekf_.x[7]) > 0.5) {
+      // 优先信任 EKF 自己估出来的 w 方向，而不是 id 跳变方向
+      // （id 关联可能在切板瞬间不准）
+      double w_ekf = ekf_.x[7];
       int delta = ((id - last_id) % 3 + 3) % 3;
-      ekf_.x[7] = (delta == 1) ? +2.51 : -2.51;
+      ekf_.x[7] = (w_ekf > 0) ? +2.51 : -2.51;
       outpost_w_sign_locked_ = true;
       tools::logger()->info(
-        "[Target] outpost w sign locked: w = {:.2f} (last_id={}, id={})",
-        ekf_.x[7], last_id, id);
+        "[Target] outpost w sign locked: w = {:.2f} "
+        "(ekf_w={:.2f}, last_id={}, id={}, delta={})",
+        ekf_.x[7], w_ekf, last_id, id, delta);
     }
 
-    // 累积当前观测到 outpost_z_obs_[id]（用世界坐标系下的 z）
-    outpost_z_obs_[id].push_back(armor.xyz_in_world[2]);
-    // 控制大小，避免无限增长
-    if (outpost_z_obs_[id].size() > 32) outpost_z_obs_[id].erase(outpost_z_obs_[id].begin());
+    // 每帧都累积 z 观测（不限制必须 switch），但限制每个 id 的样本数
+    if (outpost_z_obs_[id].size() < 32) {
+      outpost_z_obs_[id].push_back(armor.xyz_in_world[2]);
+    }
 
-    // 锁定 phase：要求至少两块不同 id 都有观测，做最小二乘选 phase*
+    // 锁定 phase：要求 3 块不同 id 都有观测（防几何欠定）+ EKF 已经稳定
+    // 注：rms[0]==rms[2] 的对称性意味着只看到 2 块板时 phase LS 二选一不可靠
     if (!outpost_phase_locked_) {
       int seen = 0;
-      for (auto & v : outpost_z_obs_) if (!v.empty()) seen++;
-      if (seen >= 2) {
+      int total = 0;
+      int min_per_id = 999;
+      for (auto & v : outpost_z_obs_) {
+        if (!v.empty()) seen++;
+        total += v.size();
+        min_per_id = std::min<int>(min_per_id, v.size());
+      }
+      // 三块板都见过 + 每块至少 3 个样本 + EKF 至少更新 30 次
+      if (seen >= 3 && min_per_id >= 3 && update_count_ >= 30) {
         // 对每个候选 phase 求 z_c 的最小二乘解，再计算残差
         int best_phi = 0;
         double best_err = 1e18;
@@ -257,12 +279,34 @@ void Target::update(const Armor & armor)
           }
           if (err < best_err) { best_err = err; best_phi = p; best_zc = zc; }
         }
+        // 诊断：把所有候选都打出来便于分析
+        double err0 = 0, err1 = 0, err2 = 0;
+        int n_total = 0;
+        for (int p = 0; p < 3; p++) {
+          double sum = 0; int n = 0;
+          for (int k = 0; k < 3; k++)
+            for (double z : outpost_z_obs_[k]) { sum += (z - OUTPOST_DZ[p][k]); n++; }
+          if (n == 0) continue;
+          double zc = sum / n;
+          double err = 0;
+          for (int k = 0; k < 3; k++)
+            for (double z : outpost_z_obs_[k]) {
+              double r = z - (zc + OUTPOST_DZ[p][k]);
+              err += r * r;
+            }
+          (p == 0 ? err0 : (p == 1 ? err1 : err2)) = err;
+          n_total = n;
+        }
         outpost_phase_ = best_phi;
         outpost_phase_locked_ = true;
-        ekf_.x[4] = best_zc;  // 把 z_c 直接拉到 LS 解
+        ekf_.x[4] = best_zc;
         tools::logger()->info(
-          "[Target] outpost phase locked: phase={}, z_c={:.3f}, rms={:.3f}",
-          best_phi, best_zc, std::sqrt(best_err));
+          "[Target] phase locked: phase={}, z_c={:.3f}, n={}, "
+          "rms[0]={:.3f}, rms[1]={:.3f}, rms[2]={:.3f}",
+          best_phi, best_zc, n_total,
+          std::sqrt(err0 / std::max(n_total, 1)),
+          std::sqrt(err1 / std::max(n_total, 1)),
+          std::sqrt(err2 / std::max(n_total, 1)));
       }
     }
   }
@@ -285,8 +329,15 @@ void Target::update_ypda(const Armor & armor, int id)
   // Eigen::VectorXd R_dig{{4e-3, 4e-3, 1, 9e-2}};
   auto center_yaw = std::atan2(armor.xyz_in_world[1], armor.xyz_in_world[0]);
   auto delta_angle = tools::limit_rad(armor.ypr_in_world[0] - center_yaw);
+  // R[1] 是 pitch 通道（垂直方向），影响 z 估计
+  // 前哨站 phase 锁定前，pitch 残差可能高达 10cm（DZ 错配），
+  // 必须把 R[1] 调大让 EKF 暂时不信 z 观测，否则会发散
+  double R_pitch = 4e-3;
+  if (name == ArmorName::outpost && !outpost_phase_locked_) {
+    R_pitch = 1.0;  // 极大值，相当于"忽略 z 观测"
+  }
   Eigen::VectorXd R_dig{
-    {4e-3, 4e-3, log(std::abs(delta_angle) + 1) + 1, log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2}};
+    {4e-3, R_pitch, log(std::abs(delta_angle) + 1) + 1, log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2}};
   //测量过程噪声偏差的方差
   Eigen::MatrixXd R = R_dig.asDiagonal();// 转换为对角矩阵
 
