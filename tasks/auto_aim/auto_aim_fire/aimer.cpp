@@ -173,13 +173,27 @@ AimPoint Aimer::choose_aim_point(const Target & target)
     leaving_angle = leaving_angle_;
   }
 
-  // 在小陀螺时，一侧的装甲板不断出现，另一侧的装甲板不断消失，显然前者被打中的概率更高
-  // 就是打delta_angle绝对值最小的装甲板
+  // 小陀螺/前哨站：选"正在转过来"那块板（命中率最高）
+  // - w > 0 (CCW): delta_angle < 0 是即将转正（前面板）
+  // - w < 0 (CW) : delta_angle > 0 是前面板
+  // 在 (-coming_angle, +coming_angle) 范围内挑"前面+最接近正对"那块
+  const int sig_w = (ekf_x[7] >= 0) ? +1 : -1;
+  int best_id = -1;
+  double best_score = 1e9;  // score 越小越好（前面 + 接近正对）
   for (int i = 0; i < armor_num; i++) {
     if (std::abs(delta_angle_list[i]) > coming_angle) continue;
-    if (ekf_x[7] > 0 && delta_angle_list[i] < leaving_angle) return {true, armor_xyza_list[i]};
-    if (ekf_x[7] < 0 && delta_angle_list[i] > -leaving_angle) return {true, armor_xyza_list[i]};
+    // 排除已经转走太远的（避免打后面）
+    if (sig_w > 0 && delta_angle_list[i] >= leaving_angle) continue;
+    if (sig_w < 0 && delta_angle_list[i] <= -leaving_angle) continue;
+    // score = sig_w * delta_angle: 越负 = 越前面（即将转正）；正值 = 已经过正
+    // 我们想要"最前面或最接近正对" = score 最小（最负）
+    double score = sig_w * delta_angle_list[i];
+    if (score < best_score) {
+      best_score = score;
+      best_id = i;
+    }
   }
+  if (best_id >= 0) return {true, armor_xyza_list[best_id]};
 
   return {false, armor_xyza_list[0]};
 }
