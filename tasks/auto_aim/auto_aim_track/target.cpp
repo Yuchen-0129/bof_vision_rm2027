@@ -241,6 +241,19 @@ void Target::update(const Armor & armor)
       outpost_z_obs_[id].push_back(armor.xyz_in_world[2]);
     }
 
+    // phase 锁定后维护每块板 z 的 EMA，给 armor_xyza_list 用
+    if (outpost_phase_locked_) {
+      const double z_obs = armor.xyz_in_world[2];
+      if (outpost_z_ema_[id] < -100.0) {
+        outpost_z_ema_[id] = z_obs;  // 第一次直接初始化
+      } else {
+        // 异常值保护：超过 30cm 跳变多半是 id 关联错，丢弃这次观测
+        if (std::abs(z_obs - outpost_z_ema_[id]) < 0.30) {
+          outpost_z_ema_[id] = 0.85 * outpost_z_ema_[id] + 0.15 * z_obs;
+        }
+      }
+    }
+
     // 锁定 phase：要求 3 块不同 id 都有观测（防几何欠定）+ EKF 已经稳定
     // 注：rms[0]==rms[2] 的对称性意味着只看到 2 块板时 phase LS 二选一不可靠
     if (!outpost_phase_locked_) {
@@ -386,14 +399,22 @@ const tools::ExtendedKalmanFilter & Target::ekf() const { return ekf_; }
 
 
 // 返回 ekf_x的装甲板序列
+// 前哨站 phase 锁定后：z 用观测 EMA 替代模型 z（解决"高板打低/低板打高"）
 std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
 {
   std::vector<Eigen::Vector4d> _armor_xyza_list;
 
+  const bool use_observed_z =
+    (name == ArmorName::outpost) && outpost_phase_locked_;
+
   for (int i = 0; i < armor_num_; i++) {
     auto angle = tools::limit_rad(ekf_.x[6] + i * 2 * CV_PI / armor_num_);
     Eigen::Vector3d xyz = h_armor_xyz(ekf_.x, i);
-    _armor_xyza_list.push_back({xyz[0], xyz[1], xyz[2], angle});
+    double z = xyz[2];
+    if (use_observed_z && i < 3 && outpost_z_ema_[i] > -100.0) {
+      z = outpost_z_ema_[i];
+    }
+    _armor_xyza_list.push_back({xyz[0], xyz[1], z, angle});
   }
   return _armor_xyza_list;
 }

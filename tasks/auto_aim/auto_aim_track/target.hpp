@@ -17,7 +17,7 @@ namespace auto_aim
 // 前哨站三块装甲板的高度阶梯（顺时针 1→2→3 高度递增 10.2cm）
 // EKF 中 id 按 yaw 递增（CCW），对应 CCW 序列 L→H→M
 // DZ[phase][id] = 在相位 phase 下，EKF id 号板相对 L 板的 z 偏移
-constexpr double OUTPOST_STEP = 0.102;  // m
+constexpr double OUTPOST_STEP = 0.102;
 constexpr double OUTPOST_DZ[3][3] = {
   {0.0,             2 * OUTPOST_STEP, OUTPOST_STEP    },  // phase=0: plate-0 = L
   {2 * OUTPOST_STEP, OUTPOST_STEP,    0.0             },  // phase=1: plate-0 = H
@@ -77,6 +77,11 @@ public:
   bool outpost_phase_locked_ = false;
   bool outpost_w_sign_locked_ = false;
   int outpost_phase_ = 0;
+
+  // 前哨站每块板观测 z 的 EMA（phase 锁定后启用），armor_xyza_list 用其替代模型 z
+  // 解决"高板打低/低板打高"：DZ 表压缩了真实高度差，直接用观测更准
+  // -1000.0 表示尚未有观测（哨兵值）
+  double outpost_z_ema_[3] = {-1000.0, -1000.0, -1000.0};
 
 private:
   int armor_num_;// 装甲板数量
