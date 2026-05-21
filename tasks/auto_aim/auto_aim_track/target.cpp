@@ -394,6 +394,8 @@ void Target::update_ypda(const Armor & armor, int id)
 
 Eigen::VectorXd Target::ekf_x() const { return ekf_.x; }
 
+void Target::set_w(double w) { ekf_.x[7] = w; }
+
 const tools::ExtendedKalmanFilter & Target::ekf() const { return ekf_; }
 
 

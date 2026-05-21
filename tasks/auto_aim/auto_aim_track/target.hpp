@@ -83,6 +83,10 @@ public:
   // -1000.0 表示尚未有观测（哨兵值）
   double outpost_z_ema_[3] = {-1000.0, -1000.0, -1000.0};
 
+  // 重捕时由 Tracker 调用：把 EKF 的 w 项直接写到指定值
+  // （仅给 outpost 重捕沿用旧 sign(w) 用，其他场景不应该用）
+  void set_w(double w);
+
 private:
   int armor_num_;// 装甲板数量
   int switch_count_;// 切换次数

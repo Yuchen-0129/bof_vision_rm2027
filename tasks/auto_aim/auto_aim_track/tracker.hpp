@@ -44,6 +44,13 @@ private:
   std::chrono::steady_clock::time_point last_timestamp_;
   ArmorPriority omni_target_priority_;
 
+  // 前哨站 phase/sign(w) 跨 set_target 缓存：跟踪同一台前哨站时保留物理几何
+  bool outpost_cache_valid_ = false;
+  bool outpost_cache_phase_locked_ = false;
+  bool outpost_cache_w_sign_locked_ = false;
+  int outpost_cache_phase_ = 0;
+  double outpost_cache_w_ = 0.0;  // 锁定的 w 值（±2.51）
+
   void state_machine(bool found);
 
   bool set_target(std::list<Armor> & armors, std::chrono::steady_clock::time_point t);

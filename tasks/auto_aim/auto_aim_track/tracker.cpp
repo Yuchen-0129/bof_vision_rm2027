@@ -40,8 +40,8 @@ std::list<Target> Tracker::track(
   auto dt = tools::delta_time(t, last_timestamp_);
   last_timestamp_ = t;
 
-  // 时间间隔过长，说明可能发生了相机离线
-  if (state_ != "lost" && dt > 0.1) {
+  // 时间间隔过长（相机离线）才判 lost；放宽到 0.5s 容忍短暂遮挡
+  if (state_ != "lost" && dt > 0.5) {
     tools::logger()->warn("[Tracker] Large dt: {:.3f}s", dt);
     state_ = "lost";
   }
@@ -83,6 +83,17 @@ std::list<Target> Tracker::track(
 
   // 设置状态机
   state_machine(found);
+
+  // 持续刷新 outpost 缓存：phase 锁定后任何时刻丢失都能保留正确状态
+  if (
+    state_ != "lost" && target_.name == ArmorName::outpost &&
+    target_.outpost_phase_locked_) {
+    outpost_cache_valid_ = true;
+    outpost_cache_phase_locked_ = true;
+    outpost_cache_w_sign_locked_ = target_.outpost_w_sign_locked_;
+    outpost_cache_phase_ = target_.outpost_phase_;
+    outpost_cache_w_ = target_.ekf_x()[7];
+  }
 
   // 发散检测
   if (state_ != "lost" && target_.diverged()) {
@@ -127,8 +138,8 @@ std::tuple<omniperception::DetectionResult, std::list<Target>> Tracker::track(
   auto dt = tools::delta_time(t, last_timestamp_);
   last_timestamp_ = t;
 
-  // 时间间隔过长，说明可能发生了相机离线
-  if (state_ != "lost" && dt > 0.1) {
+  // 时间间隔过长（相机离线）才判 lost；放宽到 0.5s 容忍短暂遮挡
+  if (state_ != "lost" && dt > 0.5) {
     tools::logger()->warn("[Tracker] Large dt: {:.3f}s", dt);
     state_ = "lost";
   }
@@ -283,6 +294,17 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   else if (armor.name == ArmorName::outpost) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}};
     target_ = Target(armor, t, 0.2765, 3, P0_dig);
+    // 沿用上次锁定的 phase / sign(w)：避免重捕后 phase LS 选错导致 z 跳变
+    if (outpost_cache_valid_ && outpost_cache_phase_locked_) {
+      target_.outpost_phase_ = outpost_cache_phase_;
+      target_.outpost_phase_locked_ = true;
+      target_.outpost_w_sign_locked_ = outpost_cache_w_sign_locked_;
+      // 把 EKF 的 w 直接拉到上次值，让钳位逻辑保持原方向
+      target_.set_w(outpost_cache_w_);
+      tools::logger()->info(
+        "[Tracker] outpost re-acquired, restored phase={} w={:+.2f}",
+        outpost_cache_phase_, outpost_cache_w_);
+    }
   }
 
   // 基地
