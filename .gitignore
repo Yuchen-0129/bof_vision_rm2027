@@ -1,5 +1,7 @@
 .vscode/
 .github/
+.claude/
+CLAUDE.md
 build/
 build_*/
 Camera/
