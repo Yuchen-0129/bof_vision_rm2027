@@ -38,12 +38,17 @@ int main(int argc, char * argv[])
 
   tools::Exiter exiter;// 退出器
   tools::Plotter plotter;// 绘图器
-  tools::Recorder recorder;// 录制器
 
-  // 离线复盘录制器：yaml record_signals=true 时启用
+  // 录制器：按 yaml 开关启用，缺省/未配置时默认开（兼容旧行为）
+  std::unique_ptr<tools::Recorder> recorder;
   std::unique_ptr<tools::SignalRecorder> signal_recorder;
   {
     auto yaml = YAML::LoadFile(config_path);
+    bool record_video = !yaml["record_video"] || yaml["record_video"].as<bool>();
+    if (record_video) {
+      recorder = std::make_unique<tools::Recorder>();
+      tools::logger()->info("[Main] Recorder (video+quat) enabled.");
+    }
     if (yaml["record_signals"] && yaml["record_signals"].as<bool>()) {
       signal_recorder = std::make_unique<tools::SignalRecorder>();
       tools::logger()->info("[Main] SignalRecorder enabled.");
@@ -84,7 +89,7 @@ int main(int argc, char * argv[])
       last_mode = mode;
     }
 
-    recorder.record(img, q, t);
+    if (recorder) recorder->record(img, q, t);
 
     // 设定 gimbal 到 world 的旋转矩阵
     solver.set_R_gimbal2world(q);

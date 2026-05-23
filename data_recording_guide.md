@@ -6,15 +6,24 @@
 
 | 类 | 内容 | 文件 | 默认 | yaml 开关 |
 |---|---|---|---|---|
-| `tools::Recorder` | 视频 + 四元数 | `<时间戳>.avi` + `<时间戳>.txt` | 已启用（在 main 里硬编码构造） | 无 |
+| `tools::Recorder` | 视频 + 四元数 | `<时间戳>.avi` + `<时间戳>.txt` | 开 | `record_video` |
 | `tools::RawSerialRecorder` | 上下位机串口字节流 | `<时间戳>_rx.bin` + `<时间戳>_tx.bin` | 关 | `record_serial_raw` |
 | `tools::SignalRecorder` | EKF / cmd / Tracker 等中间量（JSONL） | `<时间戳>_signals.jsonl` | 关 | `record_signals` |
 
-三者时间戳同一格式（`%Y-%m-%d_%H-%M-%S`），便于后期对齐。
+三者时间戳同一格式（`%Y-%m-%d_%H-%M-%S`），便于后期对齐。yaml 缺失 `record_video` 时按"开"处理，向后兼容。
 
-## 二、Recorder（视频 + 四元数，已有）
+## 二、Recorder（视频 + 四元数）
 
-每帧把 cv::Mat 和云台四元数推入异步队列，写出 `.avi`（MJPG）和 `.txt`（每行 `<since_begin> <qw> <qx> <qy> <qz>`）。fps 默认 30，构造时可改。在 `auto_aim_debug_aimer.cpp` 等 main 里调 `recorder.record(img, q, t)`。
+每帧把 cv::Mat 和云台四元数推入异步队列，写出 `.avi`（MJPG）和 `.txt`（每行 `<since_begin> <qw> <qx> <qy> <qz>`）。fps 默认 30，构造时可改。
+
+### 启用方法
+对应机器人 yaml 里：
+
+```yaml
+record_video: true   # 默认开（缺失也按 true 处理）
+```
+
+main 端读 yaml 决定是否构造 `tools::Recorder`。关掉这个开关只省视频文件，不影响别的录制。
 
 ## 三、RawSerialRecorder（串口字节流）
 

@@ -53,6 +53,7 @@ bullet_speed_canid: 0x101
 send_canid: 0xff
 can_interface: "can0"
 record_serial_raw: false # 串口字节级 raw dump 开关，开启后写入 records/<时间戳>_rx.bin / _tx.bin
+record_video: true # 视频+四元数录制开关，写入 records/<时间戳>.avi / .txt
 record_signals: false # 是否把 EKF/cmd/Tracker 等中间量写 records/*.jsonl
 
 #####-----tracker参数-----#####
