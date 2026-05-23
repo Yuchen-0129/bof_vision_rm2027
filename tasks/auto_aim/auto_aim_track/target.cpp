@@ -402,23 +402,16 @@ const tools::ExtendedKalmanFilter & Target::ekf() const { return ekf_; }
 
 
 
-// 返回 ekf_x的装甲板序列
-// 前哨站 phase 锁定后：z 用观测 EMA 替代模型 z（解决"高板打低/低板打高"）
+// 返回 ekf_x 的装甲板序列
+// 前哨站：z 一律用模型 z (ekf_x[4] + DZ[phase][id])，避免 EMA 把 PnP 在板侧倾时
+// 的 z 误差（高/低 ~20cm）平均后系统性偏估，导致 cmd_pitch 异常使子弹打高
 std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
 {
   std::vector<Eigen::Vector4d> _armor_xyza_list;
-
-  const bool use_observed_z =
-    (name == ArmorName::outpost) && outpost_phase_locked_;
-
   for (int i = 0; i < armor_num_; i++) {
     auto angle = tools::limit_rad(ekf_.x[6] + i * 2 * CV_PI / armor_num_);
     Eigen::Vector3d xyz = h_armor_xyz(ekf_.x, i);
-    double z = xyz[2];
-    if (use_observed_z && i < 3 && outpost_z_ema_[i] > -100.0) {
-      z = outpost_z_ema_[i];
-    }
-    _armor_xyza_list.push_back({xyz[0], xyz[1], z, angle});
+    _armor_xyza_list.push_back({xyz[0], xyz[1], xyz[2], angle});
   }
   return _armor_xyza_list;
 }
