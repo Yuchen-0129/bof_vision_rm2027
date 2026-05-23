@@ -1,6 +1,8 @@
 #include <fmt/core.h>
+#include <yaml-cpp/yaml.h>
 
 #include <chrono>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
 
@@ -17,6 +19,7 @@
 #include "tools/math_tools.hpp"
 #include "tools/plotter.hpp"
 #include "tools/recorder.hpp"
+#include "tools/signal_recorder.hpp"
 
 using namespace std::chrono;
 
@@ -36,6 +39,16 @@ int main(int argc, char * argv[])
   tools::Exiter exiter;// 退出器
   tools::Plotter plotter;// 绘图器
   tools::Recorder recorder;// 录制器
+
+  // 离线复盘录制器：yaml record_signals=true 时启用
+  std::unique_ptr<tools::SignalRecorder> signal_recorder;
+  {
+    auto yaml = YAML::LoadFile(config_path);
+    if (yaml["record_signals"] && yaml["record_signals"].as<bool>()) {
+      signal_recorder = std::make_unique<tools::SignalRecorder>();
+      tools::logger()->info("[Main] SignalRecorder enabled.");
+    }
+  }
 
   io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
@@ -106,6 +119,7 @@ int main(int argc, char * argv[])
 
     nlohmann::json data;
     data["t"] = tools::delta_time(std::chrono::steady_clock::now(), t0);
+    data["tracker_state"] = tracker.state();
 
     // 装甲板原始观测数据
     data["armor_num"] = armors.size();
@@ -171,6 +185,15 @@ int main(int argc, char * argv[])
       data["h"] = x[10];
       data["last_id"] = target.last_id;
 
+      // EKF 协方差对角线：看 EKF 是不是"信不信自己"，是 yaw 抖动诊断关键
+      const auto & P = target.ekf().P;
+      data["P_x"] = P(0, 0);
+      data["P_y"] = P(2, 2);
+      data["P_z"] = P(4, 4);
+      data["P_a"] = P(6, 6);
+      data["P_w"] = P(7, 7);
+      data["P_r"] = P(8, 8);
+
       // 卡方检验数据
       data["residual_yaw"] = target.ekf().data.at("residual_yaw");
       data["residual_pitch"] = target.ekf().data.at("residual_pitch");
@@ -200,6 +223,7 @@ int main(int argc, char * argv[])
 
 
     plotter.plot(data);
+    if (signal_recorder) signal_recorder->record(t, data);
 
     cv::resize(img, img, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
     cv::imshow("reprojection", img);
