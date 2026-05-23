@@ -3,6 +3,7 @@
 
 #include <Eigen/Dense>
 #include <chrono>
+#include <deque>
 #include <list>
 #include <string>
 
@@ -44,6 +45,22 @@ private:
   double max_fire_error_yaw_;
   double max_fire_error_pitch_;
   double max_shoot_angle_;
+
+  // 慢云台专用：响应时间常数 + cmd 低通 + 开火窗口 + 稳态判定
+  double gimbal_yaw_tau_;
+  double gimbal_pitch_tau_;
+  double cmd_smooth_tau_;
+  double fire_pos_window_;       // rad, 板位置进瞄准方向的角度窗
+  double fire_facing_window_;    // rad, 板法线偏离视线的最大角（防侧倾）
+  int fire_steady_frames_;
+
+  // 内部状态
+  bool cmd_lp_init_ = false;
+  double yaw_cmd_lp_ = 0;
+  double pitch_cmd_lp_ = 0;
+  std::chrono::steady_clock::time_point last_cmd_time_;
+  std::deque<double> yaw_err_hist_;
+  std::deque<double> pitch_err_hist_;
 
   HeroAimPoint choose_aim_point(const Target & target);
 };

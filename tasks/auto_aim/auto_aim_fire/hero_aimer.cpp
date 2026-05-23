@@ -22,7 +22,13 @@ HeroAimer::HeroAimer(const std::string & config_path)
   max_fire_error_yaw_ = yaml["max_fire_error_yaw"].as<double>();
   max_fire_error_pitch_ = yaml["max_fire_error_pitch"].as<double>();
   max_shoot_angle_ = yaml["max_shoot_angle"].as<double>();
-  center_mode_w_threshold_ = yaml["center_mode_w_threshold"].as<double>(12.0);
+  center_mode_w_threshold_ = yaml["center_mode_w_threshold"].as<double>(8.0);
+  gimbal_yaw_tau_ = yaml["gimbal_yaw_tau"].as<double>(0.15);
+  gimbal_pitch_tau_ = yaml["gimbal_pitch_tau"].as<double>(0.20);
+  cmd_smooth_tau_ = yaml["cmd_smooth_tau"].as<double>(0.30);
+  fire_pos_window_ = yaml["fire_pos_window"].as<double>(0.05);
+  fire_facing_window_ = yaml["fire_facing_window"].as<double>(0.40);
+  fire_steady_frames_ = yaml["fire_steady_frames"].as<int>(5);
 }
 
 // 瞄准前哨站
@@ -75,22 +81,24 @@ Eigen::Vector3d HeroAimer::get_top_front(const Target & target_origin) const
   if (std::fabs(w) < 1e-6) {
     return {hit_point_xy[0], hit_point_xy[1], ekf_x[4]};
   }
-  if (std::fabs(w) > 3) {
-    return {hit_point_xy[0], hit_point_xy[1], ekf_x[4]};
-  }
 
-  // 中间转速 瞄准有高度的装甲板
-  const double T = 2 * M_PI / w;
+  // 找未来最先转到正前方（板法线 == 中心 LOS）那块板，pitch 跟它的 z 走
+  // 这样云台 yaw 锁在车中心方向不动，只 pitch 缓慢调整高度
+  const double T = 2 * M_PI / std::fabs(w);
   const int sig_w = w > 0 ? 1 : -1;
   std::size_t armor_id = 0;
   double dt_min = INFINITY;
-  double t = 0;
   for (std::size_t k = 0; k < armors.size(); ++k) {
     const double ay = armors[k][3];
+    double t;
     if (sig_w == 1) {
-      t = (ay > center_yaw) ? T - (ay - center_yaw) / w : (center_yaw - ay) / w;
+      // CCW: 板 yaw 在递增, 找正向到达 center_yaw 的最短时间
+      const double diff = tools::limit_rad(center_yaw - ay);
+      t = (diff >= 0) ? diff / w : (diff + 2 * M_PI) / w;
     } else {
-      t = (ay < center_yaw) ? T + (ay - center_yaw) / w : (-center_yaw + ay) / w;
+      // CW: 板 yaw 在递减
+      const double diff = tools::limit_rad(ay - center_yaw);
+      t = (diff >= 0) ? diff / std::fabs(w) : (diff + 2 * M_PI) / std::fabs(w);
     }
     if (t < dt_min) {
       armor_id = k;
@@ -117,13 +125,42 @@ io::Command HeroAimer::aim(
   }
   auto ekf_x = target_predicted.ekf_x();
 
-  // 转速过大 瞄准中心
-  if (std::abs(ekf_x[7]) > 12) {
-    auto target_rotate = target;
+  // 高速分支：云台 yaw 锁在"车中心连线 - r"方向（不追板），pitch 跟将正对那块板的高度
+  // cmd 加低通防抖，开火条件改为"板进瞄准方向窗口 + 板法线朝你 + 云台稳态到位"
+  if (std::abs(ekf_x[7]) > center_mode_w_threshold_) {
     const auto t_decide = std::chrono::steady_clock::now();
+
+    // 命中时刻 = 现在 + 发弹延时 + 飞行时间 + 云台响应时间
+    // 飞行时间用一个粗略初值（按瞄准点到当前的距离估），随后用真解迭代一次
+    auto target_rotate = target;
     target_rotate.predict(t_decide);
+
+    const double t_gimbal = std::max(gimbal_yaw_tau_, gimbal_pitch_tau_);
+
+    // 第一遍：拿当前位置算粗弹道，得 fly_time
+    Eigen::Vector3d xyz_now;
+    if (target_rotate.name == ArmorName::outpost) {
+      xyz_now = get_outpost_hit_xyz(target_rotate);
+    } else {
+      xyz_now = get_top_front(target_rotate);
+    }
+    const double d_now = std::hypot(xyz_now[0], xyz_now[1]);
+    tools::Trajectory traj_init(bullet_speed, d_now, xyz_now[2]);
+    if (traj_init.unsolvable) {
+      tools::logger()->debug(
+        "[HeroAimer] Unsolvable trajectory_init: {:.2f} {:.2f} {:.2f}", bullet_speed, d_now,
+        xyz_now[2]);
+      return {false, false, 0, 0};
+    }
+
+    // 命中时刻预测
+    const double dt_total = shoot_delay_ + traj_init.fly_time + t_gimbal;
+    const auto t_hit =
+      t_decide + std::chrono::microseconds(static_cast<int>(dt_total * 1e6));
+    target_rotate.predict(t_hit);
     ekf_x = target_rotate.ekf_x();
 
+    // 命中时刻的瞄准点（xy 在车中心连线上，z 跟将正对那块板）
     Eigen::Vector3d xyz0;
     if (target_rotate.name == ArmorName::outpost) {
       xyz0 = get_outpost_hit_xyz(target_rotate);
@@ -131,39 +168,89 @@ io::Command HeroAimer::aim(
       xyz0 = get_top_front(target_rotate);
     }
 
-    const double yaw = std::atan2(xyz0[1], xyz0[0]) + yaw_offset_;
-
-    const double d0 = std::sqrt(xyz0[0] * xyz0[0] + xyz0[1] * xyz0[1]);
+    const double d0 = std::hypot(xyz0[0], xyz0[1]);
     tools::Trajectory trajectory0(bullet_speed, d0, xyz0[2]);
     if (trajectory0.unsolvable) {
-      tools::logger()->debug("[HeroAimer] Unsolvable trajectory0: {:.2f} {:.2f} {:.2f}", bullet_speed, d0, xyz0[2]);
+      tools::logger()->debug(
+        "[HeroAimer] Unsolvable trajectory0: {:.2f} {:.2f} {:.2f}", bullet_speed, d0, xyz0[2]);
       return {false, false, 0, 0};
     }
-    const double pitch = -(trajectory0.pitch + pitch_offset_);
+
+    const double yaw_raw = std::atan2(xyz0[1], xyz0[0]) + yaw_offset_;
+    const double pitch_raw = -(trajectory0.pitch + pitch_offset_);
+
+    // cmd 一阶低通：alpha = dt / (cmd_smooth_tau + dt)
+    // tau 越大 cmd 越慢，云台越跟得动；副作用：cmd 自身也滞后
+    double yaw_cmd = yaw_raw;
+    double pitch_cmd = pitch_raw;
+    if (!cmd_lp_init_) {
+      yaw_cmd_lp_ = yaw_raw;
+      pitch_cmd_lp_ = pitch_raw;
+      cmd_lp_init_ = true;
+      last_cmd_time_ = t_decide;
+    } else {
+      const double dt_cmd = std::chrono::duration<double>(t_decide - last_cmd_time_).count();
+      const double dt_eff = std::max(dt_cmd, 1e-3);
+      const double alpha = dt_eff / (cmd_smooth_tau_ + dt_eff);
+      // yaw 跨 ±π 边界处理：把残差 limit_rad 后再加回去
+      const double yaw_residual = tools::limit_rad(yaw_raw - yaw_cmd_lp_);
+      yaw_cmd_lp_ = tools::limit_rad(yaw_cmd_lp_ + alpha * yaw_residual);
+      pitch_cmd_lp_ = pitch_cmd_lp_ + alpha * (pitch_raw - pitch_cmd_lp_);
+      last_cmd_time_ = t_decide;
+      yaw_cmd = yaw_cmd_lp_;
+      pitch_cmd = pitch_cmd_lp_;
+    }
 
     debug_aim_point_ = {true, {xyz0[0], xyz0[1], xyz0[2], 0}};
 
-    const auto t_hit = t_decide + std::chrono::microseconds(
-                                   static_cast<int>((shoot_delay_ + trajectory0.fly_time) * 1e6));
-    target_rotate.predict(t_hit);
+    // 开火判定：
+    //   闸门 1：板"位置"接近瞄准方向（板会撞上来）
+    //   闸门 2：板"法线"朝你（命中时不是侧倾跳弹）
+    //   闸门 3：云台连续 N 帧到位且稳定（不是瞬时穿过）
     const auto armors_hit = target_rotate.armor_xyza_list();
-    const int sig = ekf_x[7] < 0 ? -1 : +1;
-    // 开火区间判断
-    const double error =
-      (target_rotate.name == ArmorName::outpost ? 0.01 : (std::fabs(ekf_x[7]) > 5 ? 0.04 : 0.02));
-    const auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
+    const double aim_yaw_world = yaw_cmd - yaw_offset_;
 
-    for (std::size_t k = 0; k < armors_hit.size(); ++k) {
-      const Eigen::Vector4d & ap = armors_hit[k];
-      const double armor_yaw = ap[3];
-      const double yaw_err = sig * (-armor_yaw + center_yaw);
-      if (yaw_err <= error && yaw_err >= 0 && std::fabs(ap[2] - xyz0[2]) <= 0.01) {
-        tools::logger()->info("########## fire ##########");
-        return {true, true, yaw, pitch};
+    bool any_armor_in_window = false;
+    for (const Eigen::Vector4d & ap : armors_hit) {
+      const double armor_los_yaw = std::atan2(ap[1], ap[0]);
+      const double pos_diff = std::abs(tools::limit_rad(armor_los_yaw - aim_yaw_world));
+      if (pos_diff > fire_pos_window_) continue;
+      // 板法线相对该板视线的偏差，越小越正对
+      const double facing_diff = std::abs(tools::limit_rad(ap[3] - armor_los_yaw));
+      if (facing_diff > fire_facing_window_) continue;
+      any_armor_in_window = true;
+      break;
+    }
+
+    // 云台稳态历史：用 limit_rad 处理 yaw 跨边界
+    const double yaw_err_now = std::abs(tools::limit_rad(ypr[0] - yaw_cmd));
+    const double pitch_err_now = std::abs(ypr[1] - pitch_cmd);
+    yaw_err_hist_.push_back(yaw_err_now);
+    pitch_err_hist_.push_back(pitch_err_now);
+    while ((int)yaw_err_hist_.size() > fire_steady_frames_) yaw_err_hist_.pop_front();
+    while ((int)pitch_err_hist_.size() > fire_steady_frames_) pitch_err_hist_.pop_front();
+
+    bool gimbal_steady = (int)yaw_err_hist_.size() >= fire_steady_frames_;
+    if (gimbal_steady) {
+      for (double e : yaw_err_hist_) {
+        if (e > max_fire_error_yaw_) { gimbal_steady = false; break; }
       }
     }
-    return {true, false, yaw, pitch};
+    if (gimbal_steady) {
+      for (double e : pitch_err_hist_) {
+        if (e > max_fire_error_pitch_) { gimbal_steady = false; break; }
+      }
+    }
+
+    const bool fire = any_armor_in_window && gimbal_steady;
+    if (fire) tools::logger()->info("########## fire ##########");
+    return {true, fire, yaw_cmd, pitch_cmd};
   }
+
+  // 离开高速分支：清空稳态历史和低通状态，避免下次进入时用到陈旧数据
+  cmd_lp_init_ = false;
+  yaw_err_hist_.clear();
+  pitch_err_hist_.clear();
 
   if (to_now) {
     const double dt = tools::delta_time(std::chrono::steady_clock::now(), timestamp) + shoot_delay_;

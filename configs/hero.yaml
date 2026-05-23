@@ -79,9 +79,16 @@ low_speed_delay_time: 0.010 # s
 
 #####-----hero_aimer参数-----#####
 shoot_delay: 0.05
-max_fire_error_yaw: 0.05
-max_fire_error_pitch: 0.05
+max_fire_error_yaw: 0.08      # rad, 高速分支稳态判定阈值
+max_fire_error_pitch: 0.08    # rad
 max_shoot_angle: 30
+center_mode_w_threshold: 8.0  # rad/s, 超过此值切换"瞄中心等板转过来"模式
+gimbal_yaw_tau: 0.15          # s, yaw 云台一阶响应时间常数（实测后改）
+gimbal_pitch_tau: 0.20        # s, pitch 云台一阶响应时间常数（实测后改）
+cmd_smooth_tau: 0.30          # s, cmd 低通时间常数 (~2x gimbal_tau)
+fire_pos_window: 0.05         # rad, 板位置进瞄准方向的角度窗
+fire_facing_window: 0.40      # rad ≈ 23°, 板法线偏离视线最大角（防侧倾跳弹）
+fire_steady_frames: 5         # 连续 N 帧云台稳态才允许开火
 
 #####-----shooter参数-----#####
 first_tolerance: 5 # 近距离射击容差，degree
