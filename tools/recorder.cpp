@@ -78,4 +78,83 @@ void Recorder::init(const cv::Mat & img)
   init_ = true;
 }
 
+// ===================== RawSerialRecorder =====================
+
+RawSerialRecorder::RawSerialRecorder()
+: rx_init_(false), tx_init_(false), stop_thread_(false), queue_(4096)
+{
+  auto folder_path = "records";
+  std::filesystem::create_directory(folder_path);
+
+  auto file_name = fmt::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
+  rx_path_ = fmt::format("{}/{}_rx.bin", folder_path, file_name);
+  tx_path_ = fmt::format("{}/{}_tx.bin", folder_path, file_name);
+
+  saving_thread_ = std::thread(&RawSerialRecorder::save_to_file, this);
+}
+
+RawSerialRecorder::~RawSerialRecorder()
+{
+  stop_thread_ = true;
+  // 推一个空包唤醒消费线程
+  queue_.push({Direction::RX, 0, {}});
+  if (saving_thread_.joinable()) saving_thread_.join();
+
+  if (rx_init_ && rx_writer_.is_open()) rx_writer_.close();
+  if (tx_init_ && tx_writer_.is_open()) tx_writer_.close();
+}
+
+void RawSerialRecorder::enqueue(Direction dir, const uint8_t * data, size_t size)
+{
+  if (data == nullptr || size == 0) return;
+  Packet pkt;
+  pkt.dir = dir;
+  auto now = std::chrono::steady_clock::now();
+  pkt.ts_ns =
+    std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  pkt.bytes.assign(data, data + size);
+  queue_.push(std::move(pkt));
+}
+
+void RawSerialRecorder::record_rx(const uint8_t * data, size_t size)
+{
+  enqueue(Direction::RX, data, size);
+}
+
+void RawSerialRecorder::record_tx(const uint8_t * data, size_t size)
+{
+  enqueue(Direction::TX, data, size);
+}
+
+void RawSerialRecorder::save_to_file()
+{
+  while (!stop_thread_) {
+    Packet pkt;
+    queue_.pop(pkt);
+    if (pkt.bytes.empty()) continue;
+
+    std::ofstream * writer = nullptr;
+    if (pkt.dir == Direction::RX) {
+      if (!rx_init_) {
+        rx_writer_.open(rx_path_, std::ios::binary | std::ios::out);
+        rx_init_ = true;
+      }
+      writer = &rx_writer_;
+    } else {
+      if (!tx_init_) {
+        tx_writer_.open(tx_path_, std::ios::binary | std::ios::out);
+        tx_init_ = true;
+      }
+      writer = &tx_writer_;
+    }
+
+    if (writer == nullptr || !writer->is_open()) continue;
+
+    uint8_t size_byte = static_cast<uint8_t>(std::min<size_t>(pkt.bytes.size(), 255));
+    writer->write(reinterpret_cast<const char *>(&pkt.ts_ns), sizeof(pkt.ts_ns));
+    writer->write(reinterpret_cast<const char *>(&size_byte), sizeof(size_byte));
+    writer->write(reinterpret_cast<const char *>(pkt.bytes.data()), size_byte);
+  }
+}
+
 }  // namespace tools

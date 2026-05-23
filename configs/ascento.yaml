@@ -82,6 +82,8 @@ can_interface: "can0"
 
 #####-----gimbal参数-----#####
 com_port: "/dev/gimbal"
+record_serial_raw: false # 串口字节级 raw dump 开关，开启后写入 records/<时间戳>_rx.bin / _tx.bin
+record_signals: false # 是否把 EKF/cmd/Tracker 等中间量写 records/*.jsonl
 
 #####-----buff_detector参数-----#####
 model: "assets/yolo11_buff_int8.xml"

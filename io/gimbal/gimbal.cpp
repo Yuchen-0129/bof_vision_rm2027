@@ -14,6 +14,15 @@ Gimbal::Gimbal(const std::string & config_path)
   auto yaml = tools::load(config_path);
   auto com_port = tools::read<std::string>(yaml, "com_port");
 
+  // 串口字节级 raw dump 开关，默认关闭
+  if (yaml["record_serial_raw"]) {
+    record_serial_raw_ = yaml["record_serial_raw"].as<bool>();
+  }
+  if (record_serial_raw_) {
+    raw_recorder_ = std::make_unique<tools::RawSerialRecorder>();
+    tools::logger()->info("[Gimbal] Raw serial recording enabled.");
+  }
+
   try {
     serial_.setPort(com_port);
     serial::Timeout timeout = serial::Timeout::simpleTimeout(100); // 100毫秒
@@ -99,6 +108,10 @@ void Gimbal::send(io::VisionToGimbal VisionToGimbal)
   } catch (const std::exception & e) {
     tools::logger()->warn("[Gimbal] Failed to write serial: {}", e.what());
   }
+
+  if (raw_recorder_) {
+    raw_recorder_->record_tx(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
+  }
 }
 
 void Gimbal::send(
@@ -120,6 +133,10 @@ void Gimbal::send(
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
   } catch (const std::exception & e) {
     tools::logger()->warn("[Gimbal] Failed to write serial: {}", e.what());
+  }
+
+  if (raw_recorder_) {
+    raw_recorder_->record_tx(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
   }
 }
 
@@ -168,6 +185,11 @@ void Gimbal::read_thread()
     }
 
     error_count = 0;
+
+    if (raw_recorder_) {
+      raw_recorder_->record_rx(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_));
+    }
+
     Eigen::Quaterniond q(rx_data_.q[0], rx_data_.q[1], rx_data_.q[2], rx_data_.q[3]);
     queue_.push({q, t});
 

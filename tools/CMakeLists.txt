@@ -14,5 +14,6 @@ add_library(
   ransac_sine_fitter.cpp
   recorder.cpp
   resistance_trajectory.cpp
+  signal_recorder.cpp
   trajectory.cpp
 )
