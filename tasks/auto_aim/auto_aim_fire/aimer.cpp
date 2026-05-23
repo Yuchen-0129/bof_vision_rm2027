@@ -61,18 +61,6 @@ io::Command Aimer::aim(
     return {false, false, 0, 0};
   }
 
-  // 锁定 aim_point0 对应的板 id：后续 fly_time 迭代里直接用这块板，不再重选板
-  // 否则高速小陀螺时每次迭代选到不同板，cmd 会反复跳变 ~22.5°/n
-  const auto armor_xyza_list_init = target.armor_xyza_list();
-  int locked_id = -1;
-  for (int i = 0; i < (int)armor_xyza_list_init.size(); ++i) {
-    if ((armor_xyza_list_init[i] - aim_point0.xyza).norm() < 1e-6) {
-      locked_id = i;
-      break;
-    }
-  }
-  if (locked_id < 0) locked_id = 0;  // 兜底
-
   Eigen::Vector3d xyz0 = aim_point0.xyza.head(3);
   auto d0 = std::sqrt(xyz0[0] * xyz0[0] + xyz0[1] * xyz0[1]);
   tools::Trajectory trajectory0(bullet_speed, d0, xyz0[2]);
@@ -84,36 +72,25 @@ io::Command Aimer::aim(
   }
 
   // 迭代求解飞行时间 (最多10次，收敛条件：相邻两次fly_time差 <0.001)
-  // 锁定 locked_id 对应的板，每次迭代只 predict + 取该板 + 解弹道
+  bool converged = false;
   double prev_fly_time = trajectory0.fly_time;
   tools::Trajectory current_traj = trajectory0;
-  Eigen::Vector4d locked_xyza = aim_point0.xyza;
-  Target iter_target = target;
+  std::vector<Target> iteration_target(10, target);  // 创建10个目标副本用于迭代预测
 
   for (int iter = 0; iter < 10; ++iter) {
     // 预测目标在 future + prev_fly_time 时刻的位置
     auto predict_time = future + std::chrono::microseconds(static_cast<int>(prev_fly_time * 1e6));
-    iter_target = target;  // 每次从 target 起步预测，避免累计 dt
-    iter_target.predict(predict_time);
+    iteration_target[iter].predict(predict_time);
 
-    // 直接取锁定板，不再 choose_aim_point
-    auto armor_list = iter_target.armor_xyza_list();
-    if (locked_id >= (int)armor_list.size()) {
-      debug_aim_point.valid = false;
-      return {false, false, 0, 0};
-    }
-    locked_xyza = armor_list[locked_id];
-
-    // 锁定健全性检查：板预测后偏出 90° 视为锁错（小陀螺转过头）
-    auto center_yaw = std::atan2(iter_target.ekf_x()[2], iter_target.ekf_x()[0]);
-    auto delta_angle = std::abs(tools::limit_rad(locked_xyza[3] - center_yaw));
-    if (delta_angle > 90.0 / 57.3) {
-      debug_aim_point.valid = false;
+    // 计算瞄准点
+    auto aim_point = choose_aim_point(iteration_target[iter]);
+    debug_aim_point = aim_point;
+    if (!aim_point.valid) {
       return {false, false, 0, 0};
     }
 
     // 计算新弹道
-    Eigen::Vector3d xyz = locked_xyza.head(3);
+    Eigen::Vector3d xyz = aim_point.xyza.head(3);
     double d = std::sqrt(xyz.x() * xyz.x() + xyz.y() * xyz.y());
     current_traj = tools::Trajectory(bullet_speed, d, xyz.z());
 
@@ -127,14 +104,15 @@ io::Command Aimer::aim(
     }
 
     // 检查收敛条件
-    if (std::abs(current_traj.fly_time - prev_fly_time) < 0.001) break;
+    if (std::abs(current_traj.fly_time - prev_fly_time) < 0.001) {
+      converged = true;
+      break;
+    }
     prev_fly_time = current_traj.fly_time;
   }
 
-  debug_aim_point = {true, locked_xyza};
-
   // 计算最终角度
-  Eigen::Vector3d final_xyz = locked_xyza.head(3);
+  Eigen::Vector3d final_xyz = debug_aim_point.xyza.head(3);
   double yaw = std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_;
   double pitch = -(current_traj.pitch + pitch_offset_);  //世界坐标系下pitch向上为负
   return {true, false, yaw, pitch};
