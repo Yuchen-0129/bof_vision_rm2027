@@ -60,7 +60,7 @@ can_interface: "can0"
 #####-----tracker参数-----#####
 min_detect_count: 5
 max_temp_lost_count: 25
-outpost_max_temp_lost_count: 75
+outpost_max_temp_lost_count: 150
 nis_thresh: 0.4 # 默认 NIS 失败比例阈值，超过则判 lost
 outpost_nis_thresh: 0.7 # 前哨站 NIS 阈值（强约束下 PnP 残差易触发 NIS，放宽）
 lost_timeout: 0.5 # s, dt 超过此值才判 lost（容忍短暂遮挡）

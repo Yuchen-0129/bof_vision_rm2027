@@ -66,7 +66,7 @@ record_signals: false # 是否把 EKF/cmd/Tracker 等中间量写 records/*.json
 #####-----tracker参数-----#####
 min_detect_count: 5
 max_temp_lost_count: 15
-outpost_max_temp_lost_count: 75
+outpost_max_temp_lost_count: 150
 nis_thresh: 0.4 # 默认 NIS 失败比例阈值
 outpost_nis_thresh: 0.7 # 前哨站 NIS 阈值
 lost_timeout: 0.5 # s, dt 超过此值才判 lost
