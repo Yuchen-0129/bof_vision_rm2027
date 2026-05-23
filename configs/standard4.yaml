@@ -62,6 +62,8 @@ first_tolerance: 6.0 # 近距离射击容差，degree
 second_tolerance: 4.5 # 远距离射击容差，degree
 judge_distance: 5 # m, 距离判断阈值（5m 内全用 first 的更宽容差）
 auto_fire: true # 是否由自瞄控制射击
+cmd_stable_window: 5 # shooter cmd 稳态窗口（帧），抑制高速小陀螺 cmd 跳变带来的喷水
+cmd_stable_thresh: 4.0 # degree, 窗口内 cmd 最大跳变阈值
 
 camera_name: "hikrobot"
 exposure_ms: 4.5

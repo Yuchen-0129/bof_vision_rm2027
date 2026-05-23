@@ -82,6 +82,8 @@ first_tolerance: 3.0 # 近距离射击容差，degree（放宽换弹频）
 second_tolerance: 2.0 # 远距离射击容差，degree
 judge_distance: 3 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
+cmd_stable_window: 5 # shooter cmd 稳态窗口（帧），抑制高速小陀螺 cmd 跳变带来的喷水
+cmd_stable_thresh: 4.0 # degree, 窗口内 cmd 最大跳变阈值
 
 #####-----decider参数-----#####
 mode: 1

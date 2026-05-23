@@ -92,6 +92,8 @@ first_tolerance: 2 # 近距离射击容差，degree
 second_tolerance: 0.8 # 远距离射击容差，degree
 judge_distance: 0.5 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
+cmd_stable_window: 5 # shooter cmd 稳态窗口（帧），抑制高速小陀螺 cmd 跳变带来的喷水
+cmd_stable_thresh: 4.0 # degree, 窗口内 cmd 最大跳变阈值
 
 #####-----工业相机标定参数-----#####
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
