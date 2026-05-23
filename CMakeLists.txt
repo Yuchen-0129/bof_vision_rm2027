@@ -35,8 +35,14 @@ target_link_libraries(auto_aim_debug_aimer ${OpenCV_LIBS} fmt::fmt yaml-cpp auto
 add_executable(auto_aim_debug_hero_aimer src/auto_aim_debug_hero_aimer.cpp)
 target_link_libraries(auto_aim_debug_hero_aimer ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 
+<<<<<<< HEAD
 add_executable(recorder_dump tools/recorder_dump.cpp)
 target_link_libraries(recorder_dump ${OpenCV_LIBS} fmt::fmt io tools)
+=======
+
+add_executable(standard src/standard.cpp)
+target_link_libraries(standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+>>>>>>> c7f3763 (增加比赛模式和腿哨配置)
 
 ##################calibration################
 add_executable(capture calibration/capture.cpp)
