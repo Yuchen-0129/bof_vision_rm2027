@@ -1,7 +1,6 @@
 #ifndef AUTO_AIM__SHOOTER_HPP
 #define AUTO_AIM__SHOOTER_HPP
 
-#include <chrono>
 #include <string>
 
 #include "io/command.hpp"
@@ -24,10 +23,6 @@ private:
   double first_tolerance_;
   double second_tolerance_;
   bool auto_fire_;
-  // 开火节奏限制
-  double min_fire_interval_;          // 最短两次开火间隔 (s)
-  double max_plate_yaw_for_fire_;     // 板法线相对视线最大偏角 (rad)
-  std::chrono::steady_clock::time_point last_fire_time_;
 };
 }  // namespace auto_aim
 

@@ -31,6 +31,8 @@ private:
   double pitch_offset_;
   double comming_angle_;
   double leaving_angle_;
+  double outpost_coming_angle_;
+  double outpost_leaving_angle_;
   double lock_id_ = -1;
   double high_speed_delay_time_;
   double low_speed_delay_time_;

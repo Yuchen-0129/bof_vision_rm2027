@@ -8,6 +8,8 @@
 namespace auto_aim
 {
 
+double Target::outpost_w_clamp = 2.51;
+
 // 构造函数
 Target::Target(
   const Armor & armor, 
@@ -154,9 +156,9 @@ void Target::predict(double dt)
   };
 
   
-  // 前哨站转速钳位：sign(w) 一旦锁定就钉到 ±2.51
+  // 前哨站转速钳位：sign(w) 一旦锁定就钉到 ±outpost_w_clamp
   if (this->name == ArmorName::outpost && this->outpost_w_sign_locked_) {
-    this->ekf_.x[7] = (this->ekf_.x[7] > 0) ? 2.51 : -2.51;
+    this->ekf_.x[7] = (this->ekf_.x[7] > 0) ? outpost_w_clamp : -outpost_w_clamp;
   }
 
   
@@ -228,7 +230,7 @@ void Target::update(const Armor & armor)
       // （id 关联可能在切板瞬间不准）
       double w_ekf = ekf_.x[7];
       int delta = ((id - last_id) % 3 + 3) % 3;
-      ekf_.x[7] = (w_ekf > 0) ? +2.51 : -2.51;
+      ekf_.x[7] = (w_ekf > 0) ? +outpost_w_clamp : -outpost_w_clamp;
       outpost_w_sign_locked_ = true;
       tools::logger()->info(
         "[Target] outpost w sign locked: w = {:.2f} "

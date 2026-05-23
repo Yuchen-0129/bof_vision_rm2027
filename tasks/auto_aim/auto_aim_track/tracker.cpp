@@ -25,6 +25,10 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   max_temp_lost_count_ = yaml["max_temp_lost_count"].as<int>();
   outpost_max_temp_lost_count_ = yaml["outpost_max_temp_lost_count"].as<int>();
   normal_temp_lost_count_ = max_temp_lost_count_;
+  nis_thresh_default_ = yaml["nis_thresh"].as<double>();
+  nis_thresh_outpost_ = yaml["outpost_nis_thresh"].as<double>();
+  lost_timeout_ = yaml["lost_timeout"].as<double>();
+  Target::outpost_w_clamp = yaml["outpost_w_clamp"].as<double>();
 }
 
 // 返回当前状态
@@ -40,8 +44,8 @@ std::list<Target> Tracker::track(
   auto dt = tools::delta_time(t, last_timestamp_);
   last_timestamp_ = t;
 
-  // 时间间隔过长（相机离线）才判 lost；放宽到 0.5s 容忍短暂遮挡
-  if (state_ != "lost" && dt > 0.5) {
+  // 时间间隔过长（相机离线）才判 lost
+  if (state_ != "lost" && dt > lost_timeout_) {
     tools::logger()->warn("[Tracker] Large dt: {:.3f}s", dt);
     state_ = "lost";
   }
@@ -104,7 +108,8 @@ std::list<Target> Tracker::track(
 
   // 收敛效果检测：
   // 前哨站 r/w/phase 都被强约束，PnP 残差稍大就容易触发 NIS 失败，放宽阈值
-  double nis_thresh = (target_.name == ArmorName::outpost) ? 0.7 : 0.4;
+  double nis_thresh =
+    (target_.name == ArmorName::outpost) ? nis_thresh_outpost_ : nis_thresh_default_;
   if (
     std::accumulate(
       target_.ekf().recent_nis_failures.begin(), target_.ekf().recent_nis_failures.end(), 0) >=
@@ -138,8 +143,8 @@ std::tuple<omniperception::DetectionResult, std::list<Target>> Tracker::track(
   auto dt = tools::delta_time(t, last_timestamp_);
   last_timestamp_ = t;
 
-  // 时间间隔过长（相机离线）才判 lost；放宽到 0.5s 容忍短暂遮挡
-  if (state_ != "lost" && dt > 0.5) {
+  // 时间间隔过长（相机离线）才判 lost
+  if (state_ != "lost" && dt > lost_timeout_) {
     tools::logger()->warn("[Tracker] Large dt: {:.3f}s", dt);
     state_ = "lost";
   }

@@ -18,6 +18,8 @@ Aimer::Aimer(const std::string & config_path)
   pitch_offset_ = yaml["pitch_offset"].as<double>() / 57.3;    // degree to rad
   comming_angle_ = yaml["comming_angle"].as<double>() / 57.3;  // degree to rad
   leaving_angle_ = yaml["leaving_angle"].as<double>() / 57.3;  // degree to rad
+  outpost_coming_angle_ = yaml["outpost_coming_angle"].as<double>() / 57.3;  // degree to rad
+  outpost_leaving_angle_ = yaml["outpost_leaving_angle"].as<double>() / 57.3;  // degree to rad
   high_speed_delay_time_ = yaml["high_speed_delay_time"].as<double>();
   low_speed_delay_time_ = yaml["low_speed_delay_time"].as<double>();
   decision_speed_ = yaml["decision_speed"].as<double>();
@@ -166,56 +168,21 @@ AimPoint Aimer::choose_aim_point(const Target & target)
 
   double coming_angle, leaving_angle;
   if (target.name == ArmorName::outpost) {
-    coming_angle = 70 / 57.3;
-    leaving_angle = 30 / 57.3;
+    coming_angle = outpost_coming_angle_;
+    leaving_angle = outpost_leaving_angle_;
   } else {
     coming_angle = comming_angle_;
     leaving_angle = leaving_angle_;
   }
 
-  // 小陀螺/前哨站：选"正在转过来"那块板（命中率最高）
-  // - w > 0 (CCW): delta_angle < 0 是即将转正（前面板）
-  // - w < 0 (CW) : delta_angle > 0 是前面板
-  // 在 (-coming_angle, +coming_angle) 范围内挑"前面+最接近正对"那块
-  const int sig_w = (ekf_x[7] >= 0) ? +1 : -1;
-  int best_id = -1;
-  double best_score = 1e9;  // score 越小越好（前面 + 接近正对）
+  // 在小陀螺时，一侧的装甲板不断出现，另一侧的装甲板不断消失，显然前者被打中的概率更高
+  // 就是打delta_angle绝对值最小的装甲板
   for (int i = 0; i < armor_num; i++) {
     if (std::abs(delta_angle_list[i]) > coming_angle) continue;
-    // 排除已经转走太远的（避免打后面）
-    if (sig_w > 0 && delta_angle_list[i] >= leaving_angle) continue;
-    if (sig_w < 0 && delta_angle_list[i] <= -leaving_angle) continue;
-    double score = sig_w * delta_angle_list[i];
-    if (score < best_score) {
-      best_score = score;
-      best_id = i;
-    }
+    if (ekf_x[7] > 0 && delta_angle_list[i] < leaving_angle) return {true, armor_xyza_list[i]};
+    if (ekf_x[7] < 0 && delta_angle_list[i] > -leaving_angle) return {true, armor_xyza_list[i]};
   }
 
-  // 锁定模式：lock_id 仍然在范围内就继续锁，避免两板边界反复切换导致 cmd 抖动
-  // （症状：弹打在两板中间）
-  if (lock_id_ >= 0 && lock_id_ < (int)armor_num) {
-    const double dl = delta_angle_list[lock_id_];
-    const bool lock_still_valid =
-      std::abs(dl) <= coming_angle &&
-      !(sig_w > 0 && dl >= leaving_angle) &&
-      !(sig_w < 0 && dl <= -leaving_angle);
-    if (lock_still_valid) {
-      // 只有当新候选的 score 比 lock 的 score "明显好"才换板（加 hysteresis）
-      const double lock_score = sig_w * dl;
-      const double hysteresis = 10.0 / 57.3;  // 10° 滞回，避免边界抖动
-      if (best_id < 0 || (best_score + hysteresis > lock_score)) {
-        return {true, armor_xyza_list[lock_id_]};
-      }
-    }
-  }
-
-  if (best_id >= 0) {
-    lock_id_ = best_id;
-    return {true, armor_xyza_list[best_id]};
-  }
-
-  lock_id_ = -1;
   return {false, armor_xyza_list[0]};
 }
 

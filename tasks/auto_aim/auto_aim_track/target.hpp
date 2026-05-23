@@ -87,6 +87,9 @@ public:
   // （仅给 outpost 重捕沿用旧 sign(w) 用，其他场景不应该用）
   void set_w(double w);
 
+  // 前哨站转速钳位幅值（rad/s），由 Tracker 从 yaml 加载后写入
+  static double outpost_w_clamp;
+
 private:
   int armor_num_;// 装甲板数量
   int switch_count_;// 切换次数
