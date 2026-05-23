@@ -49,11 +49,11 @@ comming_angle: 70 # degree
 leaving_angle: 25 # degree
 outpost_coming_angle: 90 # degree, 前哨站专属
 outpost_leaving_angle: 50 # degree, 前哨站专属
-decision_speed: 5 # rad/s
-# delay_time = vision 链路延迟 + 发射延迟（实测发射延迟 ~60ms + vision ~70ms = 0.13s）
-# 慢/高速小陀螺都验证 0.13 命中准，统一保持
-high_speed_delay_time: 0.06 # s
-low_speed_delay_time: 0.06 # s
+decision_speed: 10 # rad/s
+# 老 yaml 实测调好的 delay（腿哨硬件链路比 standard4 短，发射延迟更小）
+# 实测 EKF a 比真实超前 10°+，配合此 delay 可平衡使 cmd 落点接近真实板
+high_speed_delay_time: 0.031 # s
+low_speed_delay_time: 0.021 # s
 
 #####-----shooter参数-----#####
 # 已回退选板锁定，cmd 会有 ~9° 跳变；平移稳态滞后 ~4°
