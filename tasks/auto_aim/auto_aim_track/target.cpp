@@ -351,8 +351,12 @@ void Target::update_ypda(const Armor & armor, int id)
   if (name == ArmorName::outpost) {
     R_pitch = outpost_phase_locked_ ? 5e-2 : 1.0;
   }
+  // 最后一项 R[3] 是 armor_yaw（板法线 yaw）的观测噪声
+  // 原 9e-2 比球坐标 yaw（4e-3）大 25 倍，EKF 不信观测靠 predict 外推
+  // 实测 EKF a 比 PnP 观测系统性超前 ~12° → 子弹打到目标已转过的位置
+  // 降到 2e-2 让 EKF 更紧跟观测
   Eigen::VectorXd R_dig{
-    {4e-3, R_pitch, log(std::abs(delta_angle) + 1) + 1, log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 9e-2}};
+    {4e-3, R_pitch, log(std::abs(delta_angle) + 1) + 1, log(std::abs(armor.ypd_in_world[2]) + 1) / 200 + 2e-2}};
   //测量过程噪声偏差的方差
   Eigen::MatrixXd R = R_dig.asDiagonal();// 转换为对角矩阵
 
