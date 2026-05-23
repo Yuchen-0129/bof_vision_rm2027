@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=BOF Vision Auto-Aim
+Comment=Run bof_26_vision auto-aim on boot, auto-restart on crash
+Exec=@SCRIPT_DIR@/startup.sh
+StartupNotify=false
+Terminal=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10
