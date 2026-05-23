@@ -49,11 +49,12 @@ comming_angle: 70 # degree
 leaving_angle: 25 # degree
 outpost_coming_angle: 90 # degree, 前哨站专属
 outpost_leaving_angle: 50 # degree, 前哨站专属
-decision_speed: 8 # rad/s
+decision_speed: 5 # rad/s
 # delay_time = vision 链路延迟 + 发射延迟（摩擦轮+拨弹 ~0.10s）
-# 实测发射延迟 100ms，加 vision 链 90ms，共 0.19s
+# 高速小陀螺需要充分预测覆盖整个 fly_time+发射延迟（cmd 超前一点不影响命中）
+# 慢小陀螺减小预测量避免视觉上"打到目标转过去前的位置"（cmd 前置 39° → 27°）
 high_speed_delay_time: 0.19 # s
-low_speed_delay_time: 0.19 # s
+low_speed_delay_time: 0.13 # s
 
 #####-----shooter参数-----#####
 # 已回退选板锁定，cmd 会有 ~9° 跳变；平移稳态滞后 ~4°
