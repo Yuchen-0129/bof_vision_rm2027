@@ -43,7 +43,7 @@ outpost_w_clamp: 2.51 # rad/s, 前哨站 sign(w) 锁定后的钳位幅值
 
 #####-----aimer参数-----#####
 yaw_offset: 0.0 # degree -2.5
-pitch_offset: -5.1 # degree 2
+pitch_offset: 0 # degree, 实测 cmd 已对齐目标几何，不再补偿（原 -5.1 让云台多抬 4° 致打高 12cm）
 # 已回退选板锁定，迭代重选板时 cmd 会有 ~9° 跳变，coming/leaving 维持 70/25
 comming_angle: 70 # degree
 leaving_angle: 25 # degree
