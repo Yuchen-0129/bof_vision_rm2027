@@ -10,7 +10,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIDFILE="${SCRIPT_DIR}/logs/bof_vision.pid"
 EXEC="${SCRIPT_DIR}/build/auto_aim_debug_aimer"
-CONFIG="${SCRIPT_DIR}/configs/standard4.yaml"
+CONFIG="${SCRIPT_DIR}/configs/sentry.yaml"
 
 mkdir -p "${SCRIPT_DIR}/logs"
 LOGFILE="${SCRIPT_DIR}/logs/$(date +%Y-%m-%d_%H-%M-%S).log"
