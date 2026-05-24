@@ -21,26 +21,8 @@ roi:
 
 use_roi: false
 
-#####-----USB相机参数-----#####
-image_width: 1280
-image_height: 720
-fov_h: 57.7 #87.7
-fov_v: 56.7 
-new_fov_h: 27 #67
-new_fov_v: 40.9
-usb_frame_rate: 120
-usb_exposure: 500 #1-80000______250
-usb_gamma: 160
-usb_gain: 10 #0-96
-
-#####-----工业相机参数-----#####
-camera_name: "hikrobot"
-exposure_ms: 6.0
-gain: 16.9
-vid_pid: "2bdf:0001"
-
 #####-----传统方法参数-----#####
-threshold: 150
+threshold: 130
 max_angle_error: 45 # degree
 min_lightbar_ratio: 1.5
 max_lightbar_ratio: 20
@@ -49,73 +31,83 @@ min_armor_ratio: 1
 max_armor_ratio: 5
 max_side_ratio: 1.5
 max_rectangular_error: 25 # degree
-min_confidence: 0.8
-
-#####-----cboard参数-----#####
-quaternion_canid: 0x01
-bullet_speed_canid: 0x110
-send_canid: 0xff
-can_interface: "can0"
 
 #####-----tracker参数-----#####
 min_detect_count: 5
-max_temp_lost_count: 25
+max_temp_lost_count: 15
 outpost_max_temp_lost_count: 150
-nis_thresh: 0.4 # 默认 NIS 失败比例阈值，超过则判 lost
-outpost_nis_thresh: 0.7 # 前哨站 NIS 阈值（强约束下 PnP 残差易触发 NIS，放宽）
-lost_timeout: 0.5 # s, dt 超过此值才判 lost（容忍短暂遮挡）
-outpost_w_clamp: 2.51 # rad/s, 前哨站 sign(w) 锁定后的钳位幅值（规则 0.4Hz≈2.513）
+nis_thresh: 0.4 # 默认 NIS 失败比例阈值
+outpost_nis_thresh: 0.7 # 前哨站 NIS 阈值
+lost_timeout: 0.5 # s, dt 超过此值才判 lost
+outpost_w_clamp: 2.51 # rad/s, 前哨站 sign(w) 锁定后的钳位幅值
 
 #####-----aimer参数-----#####
-yaw_offset: 3.0 # degree -2.5
-pitch_offset: 0.0  # degree 2
-comming_angle: 50 # degree
-leaving_angle: 15 # degree
-outpost_coming_angle: 90 # degree, 前哨站专属：板转过来时进入选板的最大偏角
-outpost_leaving_angle: 50 # degree, 前哨站专属：板转走时退出选板的角度
-decision_speed: 10 # rad/s
-high_speed_delay_time: 0.12 # s（原 0.5 是 bug，导致高速时预测到下一块板乱飞）
-low_speed_delay_time: 0.12 # s
+yaw_offset: 3.5 # degree -2.5
+pitch_offset: -1.5 # degree 2
+comming_angle: 55 # degree
+leaving_angle: 20 # degree
+outpost_coming_angle: 90 # degree, 前哨站专属
+outpost_leaving_angle: 50 # degree, 前哨站专属
+decision_speed: 7 # rad/s
+high_speed_delay_time: 0.0 # s
+low_speed_delay_time: 0.0 # s planner use this value
 
 #####-----shooter参数-----#####
-first_tolerance: 3.0 # 近距离射击容差，degree（放宽换弹频）
-second_tolerance: 2.0 # 远距离射击容差，degree
-judge_distance: 3 #距离判断阈值
+first_tolerance: 3 # 近距离射击容差，degree
+second_tolerance: 2 # 远距离射击容差，degree
+judge_distance: 2 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
 cmd_stable_window: 5 # shooter cmd 稳态窗口（帧），抑制高速小陀螺 cmd 跳变带来的喷水
 cmd_stable_thresh: 4.0 # degree, 窗口内 cmd 最大跳变阈值
 
-#####-----decider参数-----#####
-mode: 1
+camera_name: "hikrobot"
+exposure_ms: 5.5
+gain: 16.0
+vid_pid: "2bdf:0001"
 
-#####-----工业相机标定参数-----#####
+#  1  0  0
+#  0  1  0
+#  0  0  1
 R_gimbal2imubody: [-1, 0, 0, 0, -1, 0, 0, 0, 1]
 
+# 重投影误差: 0.0425px
+camera_matrix: [1821.812086205199, 0, 704.79519241655362, 0, 1821.9204562773859, 570.17515449215125, 0, 0, 1]
+distort_coeffs: [-0.065772250245356975, 0.12333352667082984, 0.00033240830515773542, -8.9137153102227819e-05, 0]
 
-# 重投影误差: 0.0514px
-camera_matrix: [1858.6294533173059, 0, 718.20875966181677, 0, 1855.7942484007674, 570.50084265864928, 0, 0, 1]
-distort_coeffs: [-0.061881751463666021, 0.14334414883522373, 0.00089326148533244503, 0.00027194233619169179, 0]
+# 相机同理想情况的偏角: yaw3.30 pitch0.43 roll-0.17 degree
+R_camera2gimbal: [-0.057535914925849863, 0.0072517877428213695, 0.99831709895612752, -0.99833901001861225, -0.0033959247361756706, -0.057512509684794932, 0.0029731412181012162, -0.99996793912090964, 0.0074351302327486657]
+t_camera2gimbal: [0.042850306915599511, -0.0047984766930588649, 0.08789162520698944]
 
-# 相机同理想情况的偏角: yaw3.61 pitch-0.16 roll0.33 degree
-# 标定板到世界坐标系原点的水平距离: 3.49 m
-# 标定板同竖直摆放时的偏角: yaw-16.37 pitch9.20 roll0.30 degree
-R_camera2gimbal: [-0.06289712948639567, -0.0024851448715494384, 0.99801692127806063, -0.99800381701489571, 0.0058540313375030628, -0.062881726604775423, -0.0056861521321336927, -0.99997977698154794, -0.0028483858346936841]
-t_camera2gimbal: [0.0075708453067452434, 0.0022004406609048843, 0.051187257656726722]
-
-
-#####-----buff_detector参数-----#####
-model: "assets/yolo11_buff_int8.xml"  
-
-#####-----buff_aimer参数-----#####
-fire_gap_time: 0.700   # s
-predict_time: 0.120    # s
+#####-----cboard参数-----#####
+quaternion_canid: 0x100
+bullet_speed_canid: 0x101
+send_canid: 0xff
+can_interface: "can0"
 
 #####-----gimbal参数-----#####
 com_port: "/dev/ttyACM1"
 record_serial_raw: false # 串口字节级 raw dump 开关，开启后写入 records/<时间戳>_rx.bin / _tx.bin
 record_video: true # 视频+四元数录制开关，写入 records/<时间戳>.avi / .txt
-record_signals: false # 是否把 EKF/cmd/Tracker 等中间量写 records/*.jsonl
+record_signals: true # 是否把 EKF/cmd/Tracker 等中间量写 records/*.jsonl
 yaw_kp: 0
 yaw_kd: 0
 pitch_kp: 0
 pitch_kd: 0
+
+#####-----planner-----#####
+fire_thresh: 0.0035
+
+max_yaw_acc: 50
+Q_yaw: [9e6, 0]
+R_yaw: [1]
+
+max_pitch_acc: 100
+Q_pitch: [9e6, 0]
+R_pitch: [1]
+
+#####-----buff_detector参数-----#####
+model: "assets/yolo11_buff_int8.xml"
+
+#####-----buff_aimer参数-----#####
+fire_gap_time: 0.700   # s
+predict_time: 0.120     # s
