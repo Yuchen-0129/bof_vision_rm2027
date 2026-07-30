@@ -226,7 +226,9 @@ void OutpostTarget::update(const Armor & armor)
         // 只接受合理区间：滤掉丢帧造成的超长间隔和抖动造成的超短间隔
         if (dt_sw > 0.3 && dt_sw < 1.6 && w_obs > OUTPOST_W_MIN && w_obs < OUTPOST_W_MAX) {
           // 慢速 EMA：转速是物理常量，只需把先验拉到真值，不必跟踪快变
-          w_mag_ = 0.85 * w_mag_ + 0.15 * w_obs;
+          // 前 kWSwitchNeeded 次用大权重快速拉到真值，之后转小权重稳住
+          double alpha = (switch_seen_ < kWSwitchNeeded) ? 0.35 : 0.10;
+          w_mag_ = (1 - alpha) * w_mag_ + alpha * w_obs;
           switch_seen_++;
           if (switch_seen_ <= 4 || switch_seen_ % 10 == 0)
             tools::logger()->info(
@@ -342,7 +344,9 @@ std::vector<Eigen::Vector4d> OutpostTarget::armor_xyza_list() const
 OutpostTarget::AimChoice OutpostTarget::choose_at(double fly_time, double max_delta) const
 {
   AimChoice out{false, Eigen::Vector4d::Zero(), 0.0};
-  if (!dir_locked_) return out;  // 方向未知就不发瞄准点，避免往错方向外推
+  // 方向未锁 或 转速未收敛都不发瞄准点：这两个阶段相位外推不可靠，
+  // 实测框跳 14 次里 12 次都落在这里（稳态只剩 2 次）
+  if (!ready()) return out;
 
   const auto & x = ekf_.x;
   // 命中时刻的相位：只用已知常量外推，不含任何被估计的量

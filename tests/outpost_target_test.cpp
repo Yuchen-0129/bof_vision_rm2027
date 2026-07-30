@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <algorithm>
 #include <numeric>
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -39,6 +40,11 @@ struct Stats
   std::vector<double> cmd_yaw;   // 每帧瞄准角（取最正对板的方位）
   std::vector<double> reproj;    // 重投影误差 px
   std::vector<double> cx, cy;   // 旋转中心估计（前哨站固定不动 → 越稳越好）
+  // 三块板位置的逐帧最大位移 —— 这直接对应"画面上框在跳"这个现象。
+  // signals 实测旧链路：p50 2.06cm / p95 8.77cm / max 86.2cm，2% 的帧跳 >15cm
+  std::vector<double> plate_move;
+  std::vector<Eigen::Vector4d> prev_plates;
+  int resets = 0;
   int sign_flips = 0;
   int frames = 0;
 };
@@ -73,6 +79,18 @@ double jump_p95(const std::vector<double> & v)
   return pct(d, 0.95) * 57.3;
 }
 
+// 三块板逐帧最大位移（cm）
+void accum_move(Stats & s, const std::vector<Eigen::Vector4d> & now)
+{
+  if (!s.prev_plates.empty() && s.prev_plates.size() == now.size()) {
+    double mx = 0;
+    for (size_t i = 0; i < now.size(); i++)
+      mx = std::max(mx, (now[i].head(3) - s.prev_plates[i].head(3)).norm());
+    s.plate_move.push_back(mx * 100);
+  }
+  s.prev_plates = now;
+}
+
 void report(const std::string & tag, const Stats & s)
 {
   std::vector<double> wabs;
@@ -94,6 +112,16 @@ void report(const std::string & tag, const Stats & s)
     "  中心抖动          x std={:.2f}cm  y std={:.2f}cm  合计={:.2f}cm  <-- 越小越稳\n",
     stdev(s.cx) * 100, stdev(s.cy) * 100,
     std::hypot(stdev(s.cx), stdev(s.cy)) * 100);
+  if (!s.plate_move.empty()) {
+    int big = 0;
+    for (auto v : s.plate_move)
+      if (v > 15) big++;
+    fmt::print(
+      "  三板框逐帧位移    p50={:.2f}cm p95={:.2f}cm max={:.1f}cm   >15cm 占 {:.1f}%"
+      "  <-- 这就是画面上的\"框跳\"\n",
+      pct(s.plate_move, 0.5), pct(s.plate_move, 0.95),
+      *std::max_element(s.plate_move.begin(), s.plate_move.end()), 100.0 * big / s.plate_move.size());
+  }
 }
 
 // 取最正对我方的那块板的方位角，模拟 aimer 的瞄准角
@@ -184,6 +212,7 @@ int main(int argc, char * argv[])
       old_s.cmd_yaw.push_back(aim_yaw(old_t.armor_xyza_list()));
       old_s.cx.push_back(x[0]);
       old_s.cy.push_back(x[2]);
+      accum_move(old_s, old_t.armor_xyza_list());
       old_s.frames++;
     }
 
@@ -200,6 +229,7 @@ int main(int argc, char * argv[])
       new_s.cmd_yaw.push_back(aim_yaw(new_t.armor_xyza_list()));
       new_s.cx.push_back(x[0]);
       new_s.cy.push_back(x[2]);
+      accum_move(new_s, new_t.armor_xyza_list());
       new_s.frames++;
     }
 
@@ -242,6 +272,18 @@ int main(int argc, char * argv[])
   fmt::print(
     "  中心抖动   {:.2f}cm → {:.2f}cm\n", std::hypot(stdev(old_s.cx), stdev(old_s.cy)) * 100,
     std::hypot(stdev(new_s.cx), stdev(new_s.cy)) * 100);
+  if (!old_s.plate_move.empty() && !new_s.plate_move.empty()) {
+    auto cnt = [](const std::vector<double> & v) {
+      int b = 0;
+      for (auto x : v)
+        if (x > 15) b++;
+      return 100.0 * b / v.size();
+    };
+    fmt::print(
+      "  框跳>15cm  {:.1f}% → {:.1f}%   (max {:.0f}cm → {:.0f}cm)\n", cnt(old_s.plate_move),
+      cnt(new_s.plate_move), *std::max_element(old_s.plate_move.begin(), old_s.plate_move.end()),
+      *std::max_element(new_s.plate_move.begin(), new_s.plate_move.end()));
+  }
   fmt::print(
     "\n  注：重投影误差不适合单独评判本模型。前哨站 5m 外 PnP 纵深噪声实测 24cm，\n"
     "      旧模型靠让 center 自由漂移去吸收这个噪声，重投影自然低（那是它的优化目标），\n"

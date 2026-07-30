@@ -99,6 +99,14 @@ public:
   // 在线估计的转速幅值（rad/s，恒正）。未收敛时返回先验 OUTPOST_W。
   double w_mag() const { return w_mag_; }
 
+  // 转速是否已收敛（够多次换板观测）。未收敛时相位外推还不可靠，
+  // 实测框跳 14 次里有 12 次都在"方向未锁 + 转速未收敛"这两个阶段，
+  // 稳态只剩 2 次 —— 所以这两个阶段就该老实不发瞄准点。
+  bool w_converged() const { return switch_seen_ >= kWSwitchNeeded; }
+
+  // 整体就绪：方向锁定 且 转速收敛，才认为可以拿去瞄准
+  bool ready() const { return dir_locked_ && w_converged(); }
+
   // 旋转方向：+1 / -1，未锁定时为 0
   int spin_dir() const { return spin_dir_; }
   bool dir_locked() const { return dir_locked_; }
@@ -130,6 +138,10 @@ private:
   bool converged_ = false;
 
   // —— 旋转方向：离散量，投票 + 滞回，不进 EKF ——
+  // 转速收敛所需的换板观测次数。EMA(0.15) 下 6 次可把先验的 11.7% 偏差
+  // 收掉约 62%，实测第 6 次已到 2.6 rad/s 量级（真值 2.805）
+  static constexpr int kWSwitchNeeded = 6;
+
   // 转速幅值在线估计：用"同一块板转过 120° 的时间"更新，比对 yaw 差分更抗噪
   // （单帧 yaw 噪声 ±6°，而一次换板积累 120°，相对误差小 20 倍）
   double w_mag_ = OUTPOST_W;

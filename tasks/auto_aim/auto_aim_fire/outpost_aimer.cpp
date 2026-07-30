@@ -18,11 +18,19 @@ OutpostAimer::OutpostAimer(const std::string & config_path)
   yaw_offset_ = yaml["yaw_offset"].as<double>() / 57.3;
   pitch_offset_ = yaml["pitch_offset"].as<double>() / 57.3;
   shoot_delay_ = yaml["outpost_shoot_delay"] ? yaml["outpost_shoot_delay"].as<double>() : 0.10;
-  // 可打窗口：±60° 时三块板刚好 100% 占空（3×120°），是"尽可能多打"的理论上限。
-  // 但板越斜有效投影越窄（60° 时小板 135mm 只剩 67mm），所以瞄准放宽到 60°、
-  // 开火收紧到 35°：宁可多瞄准少开火，也不要在斜板上浪费弹丸。
-  max_delta_ = (yaml["outpost_max_delta"] ? yaml["outpost_max_delta"].as<double>() : 60.0) / 57.3;
-  fire_delta_ = (yaml["outpost_fire_delta"] ? yaml["outpost_fire_delta"].as<double>() : 35.0) / 57.3;
+  // 可打窗口。±60° 理论上是"尽可能多打"的上限（3 块板 ×120° 刚好 100% 占空），
+  // 但实测不能这么设：records/2026-07-31_06-22-34 扫参结果——
+  //   60°: 有效 245 帧, 瞄准点跳>15cm 占 5.6%, max 49.8cm
+  //   45°: 有效 191 帧, 跳>15cm 1.2%,          max 20.0cm
+  //   35°: 有效 143 帧, 跳>15cm 0.0%,          max 12.8cm   ← 采用
+  //   30°: 有效 123 帧, 跳>15cm 0.0%,          max 11.3cm
+  // 60° 时的大跳(41~50cm)全都发生在 delta 46~60° 的边界上：那是换板瞬间，
+  // 瞄准点从一块板切到相邻板，位移就是两板间距——物理上必然，不是滤波抖动。
+  // 在边界附近来回切会让瞄准点反复大幅横跳，比"少打几帧"糟得多。
+  // 35° 是甜点：跳变归零，仍保留 58% 的帧可瞄。
+  max_delta_ = (yaml["outpost_max_delta"] ? yaml["outpost_max_delta"].as<double>() : 35.0) / 57.3;
+  // 开火再收一档：板越斜有效投影越窄（35° 时小板 135mm 只剩 111mm）
+  fire_delta_ = (yaml["outpost_fire_delta"] ? yaml["outpost_fire_delta"].as<double>() : 25.0) / 57.3;
   auto_fire_ = yaml["auto_fire"] ? yaml["auto_fire"].as<bool>() : true;
 }
 
