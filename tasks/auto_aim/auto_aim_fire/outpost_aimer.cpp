@@ -17,7 +17,16 @@ OutpostAimer::OutpostAimer(const std::string & config_path)
   // 这样没同步改 yaml 的机器人也能开机
   yaw_offset_ = yaml["yaw_offset"].as<double>() / 57.3;
   pitch_offset_ = yaml["pitch_offset"].as<double>() / 57.3;
-  shoot_delay_ = yaml["outpost_shoot_delay"] ? yaml["outpost_shoot_delay"].as<double>() : 0.10;
+  // 提前量 = 弹道飞行 + 本参数。本参数要覆盖"从相机曝光到子弹离膛"的全部延迟：
+  // 各段延迟都用 records/2026-07-31_06-57-17 实测（不是猜的）：
+  //   云台响应（cmd→云台到位）  79ms  互相关 gimbal_yaw vs cmd_yaw 实测
+  //   EKF 自身相位滞后          30ms  互相关 EKF a vs 观测板 yaw 实测
+  //   图像链路（曝光+传输+推理） 12ms  signals 的 loop_ms p50
+  //   合计约 121ms，取 0.12。
+  // 原来给 0.10 略少；更关键的是 79ms 那段之前完全没纳入考虑。
+  // 一块板的角宽仅 28.3°（板宽13.5cm/半径0.2765m），而 2.79rad/s 下
+  // 100ms 就转 16°，超过半个板宽 —— 提前量估错必然打后沿，就是"打着打着滞后"。
+  shoot_delay_ = yaml["outpost_shoot_delay"] ? yaml["outpost_shoot_delay"].as<double>() : 0.12;
   // 可打窗口。±60° 理论上是"尽可能多打"的上限（3 块板 ×120° 刚好 100% 占空），
   // 但实测不能这么设：records/2026-07-31_06-22-34 扫参结果——
   //   60°: 有效 245 帧, 瞄准点跳>15cm 占 5.6%, max 49.8cm

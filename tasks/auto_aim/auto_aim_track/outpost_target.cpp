@@ -30,6 +30,7 @@ constexpr double Z_EMA_ALPHA = 0.15;
 OutpostTarget::OutpostTarget(const Armor & armor, std::chrono::steady_clock::time_point t)
 : armor_type(armor.type), priority(armor.priority), t_(t)
 {
+  // 离线扫参用的后门：正式运行不设这些环境变量，走默认值
   if (const char * e = std::getenv("OP_GATE")) gate_m_ = std::atof(e);
   const Eigen::VectorXd & xyz = armor.xyz_in_world;
   const Eigen::VectorXd & ypr = armor.ypr_in_world;
@@ -74,7 +75,7 @@ void OutpostTarget::predict(std::chrono::steady_clock::time_point t)
   // theta 的噪声反映"转速常量假设"的误差，给得比整车模型小得多——
   // 整车 v2=0.1 是留给未知角加速度的，这里转速已知，不需要那份余量。
   double q_pos = 1e-8 * dt;  // 固定建筑，中心基本不动
-  double q_theta = 2e-4 * dt;
+  double q_theta = q_theta_ * dt;
   Eigen::VectorXd q_dig{{q_pos, q_pos, q_pos, q_theta}};
   Eigen::MatrixXd Q = q_dig.asDiagonal();
 
@@ -265,16 +266,23 @@ void OutpostTarget::update(const Armor & armor)
         double dt_sw = tools::delta_time(t_, last_switch_t_);
         double w_obs = (2 * M_PI / OUTPOST_ARMOR_NUM) / dt_sw;
         // 只接受合理区间：滤掉丢帧造成的超长间隔和抖动造成的超短间隔
-        if (dt_sw > 0.3 && dt_sw < 1.6 && w_obs > OUTPOST_W_MIN && w_obs < OUTPOST_W_MAX) {
-          // 慢速 EMA：转速是物理常量，只需把先验拉到真值，不必跟踪快变
-          // 前 kWSwitchNeeded 次用大权重快速拉到真值，之后转小权重稳住
-          double alpha = (switch_seen_ < kWSwitchNeeded) ? 0.35 : 0.10;
-          w_mag_ = (1 - alpha) * w_mag_ + alpha * w_obs;
-          switch_seen_++;
-          if (switch_seen_ <= 4 || switch_seen_ % 10 == 0)
-            tools::logger()->info(
-              "[Outpost] 转速在线估计 {:.4f} rad/s ({:.3f} r/s)，本次观测 {:.4f}，第 {} 次",
-              w_mag_, w_mag_ / (2 * M_PI), w_obs, switch_seen_);
+        // 间隔限 0.4~1.2s：滤掉丢帧造成的超长和匹配抖动造成的超短
+        if (dt_sw > 0.4 && dt_sw < 1.2) {
+          sw_intervals_.push_back(dt_sw);
+          if (sw_intervals_.size() > kSwWindow) sw_intervals_.pop_front();
+          // 取中位数（抗离群），而不是 EMA（会被偏小样本持续拉低）
+          std::vector<double> v(sw_intervals_.begin(), sw_intervals_.end());
+          std::sort(v.begin(), v.end());
+          double med = v[v.size() / 2];
+          double w_med = (2 * M_PI / OUTPOST_ARMOR_NUM) / med;
+          if (w_med > OUTPOST_W_MIN && w_med < OUTPOST_W_MAX) {
+            w_mag_ = w_med;
+            switch_seen_++;
+            if (switch_seen_ <= 3 || switch_seen_ % 15 == 0)
+              tools::logger()->info(
+                "[Outpost] 转速 {:.4f} rad/s ({:.3f} r/s)，中位数窗 {} 个，第 {} 次",
+                w_mag_, w_mag_ / (2 * M_PI), sw_intervals_.size(), switch_seen_);
+          }
         }
       }
       last_switch_t_ = t_;
@@ -334,7 +342,7 @@ void OutpostTarget::update(const Armor & armor)
     reacq = 1.0 + 8.0 * reacquire_frames_;
     reacquire_frames_--;
   }
-  Eigen::VectorXd R_dig{{5e-3 * reacq, 5e-3 * reacq, 1e-2 * reacq}};
+  Eigen::VectorXd R_dig{{5e-3 * reacq, 5e-3 * reacq, r_yaw_ * reacq}};
   Eigen::MatrixXd R = R_dig.asDiagonal();
 
   Eigen::VectorXd z_obs(3);

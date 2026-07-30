@@ -163,10 +163,23 @@ private:
   // 转速幅值在线估计：用"同一块板转过 120° 的时间"更新，比对 yaw 差分更抗噪
   // （单帧 yaw 噪声 ±6°，而一次换板积累 120°，相对误差小 20 倍）
   double w_mag_ = OUTPOST_W;
+  // 换板间隔样本池，取中位数而非 EMA。
+  // EMA 的问题：识别丢帧会让换板事件被延迟发现 → 间隔算大 → 转速算小，
+  // 而这种偏小样本很常见（实测识别率仅 45%，60 次换板只有 2 次完全无丢帧），
+  // EMA 会被它们持续拉低。实测 EMA 从第 10 次的 0.428 r/s 退化到第 20 次的
+  // 0.393（真值 0.4425），相位滞后随之在 9~37° 间漂 —— 这就是"打着打着滞后"。
+  // 中位数天然抗离群：同一份数据滑动中位数稳定在 0.424~0.476。
+  std::deque<double> sw_intervals_;
+  static constexpr size_t kSwWindow = 9;
   int switch_seen_ = 0;
   std::chrono::steady_clock::time_point last_switch_t_;
   bool has_switch_t_ = false;
   int last_matched_id_ = -1;
+  // 这两个都扫过参，对滞后无影响（q_theta 2e-4~5e-2 只让偏差 16.8→15.8cm，
+  // r_yaw 1e-2~3e-4 只让 16.8→16.3cm）——因为 16cm 是观测噪声地板
+  // （观测自身逐帧 p95 就有 15.4cm），不是 EKF 滞后。保持原值。
+  double q_theta_ = 2e-4;
+  double r_yaw_ = 1e-2;
   double gate_m_ = 0.45;  // 野值门阈值(m)；OP_GATE 环境变量可覆盖（扫参用）
   int outlier_run_ = 0;   // 连续被拒的帧数，太多说明预测自己错了，得放行重收敛
 
