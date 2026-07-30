@@ -29,6 +29,7 @@ target_link_libraries(auto_aim_track io)
 
 add_library(auto_aim_fire OBJECT
     auto_aim_fire/aimer.cpp
+    auto_aim_fire/outpost_aimer.cpp
     auto_aim_fire/hero_aimer.cpp
     auto_aim_fire/shooter.cpp
     auto_aim_fire/planner/planner.cpp

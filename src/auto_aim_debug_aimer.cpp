@@ -7,6 +7,8 @@
 #include "io/camera.hpp"
 #include "io/gimbal/gimbal.hpp"  // 替换 cboard.hpp
 #include "tasks/auto_aim/auto_aim_fire/aimer.hpp"
+#include "tasks/auto_aim/auto_aim_fire/outpost_aimer.hpp"
+#include "tasks/auto_aim/auto_aim_track/outpost_target.hpp"
 #include "tasks/auto_aim/auto_aim_fire/shooter.hpp"
 #include "tasks/auto_aim/auto_aim_track/solver.hpp"
 #include "tasks/auto_aim/auto_aim_track/tracker.hpp"
@@ -50,7 +52,13 @@ int main(int argc, char * argv[])
   auto_aim::Solver solver(config_path);//坐标结算
   auto_aim::Tracker tracker(config_path, solver);//跟踪器
   auto_aim::Aimer aimer(config_path);//瞄准器    作用：弹道结算 生成瞄准命令
-  auto_aim::Shooter shooter(config_path);// 发射器   作用：开火决策
+  auto_aim::Shooter shooter(config_path);
+
+  // 前哨站独立链路：自己的 tracker + aimer，与整车那条完全平行。
+  // 前哨站转速/半径由规则写死、只有方向随机，跟整车的未知运动学是两回事，
+  // 所以分开走，互不影响（整车的 Tracker/Target/Aimer 一行未改）。
+  auto_aim::OutpostTracker outpost_tracker(config_path);
+  auto_aim::OutpostAimer outpost_aimer(config_path);// 发射器   作用：开火决策
 
   cv::Mat img;
   Eigen::Quaterniond q;
@@ -90,6 +98,9 @@ int main(int argc, char * argv[])
     //识别装甲板
     auto armors = detector.detect(img);
 
+    // 前哨站先走独立链路（只消费前哨站装甲板，armors 只读）
+    auto outpost_targets = outpost_tracker.track(armors, t, solver);
+
     //跟踪目标
     auto targets = tracker.track(armors, t, gimbal_state.enemy_color);
 
@@ -99,6 +110,14 @@ int main(int argc, char * argv[])
 
     // 决定是否射击
     command.shoot = shooter.shoot(command, aimer, targets, ypr);
+
+    // 前哨站有解时优先用它的 cmd 覆盖：前哨站是固定建筑、转速已知，
+    // 它的解比整车模型可靠得多。没解时（未捕获/方向未锁/无板朝向我方）
+    // 完全不动整车的 command，整车行为保持原样。
+    if (!outpost_targets.empty()) {
+      auto oc = outpost_aimer.aim(outpost_targets, gimbal_state.bullet_speed);
+      if (oc.control) command = oc;
+    }
 
     // 使用串口发送命令
     gimbal.send(

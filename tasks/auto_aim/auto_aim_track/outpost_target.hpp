@@ -4,9 +4,12 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <deque>
+#include <list>
+#include <string>
 #include <vector>
 
 #include "tasks/auto_aim/common/armor.hpp"
+#include "tasks/auto_aim/auto_aim_track/solver.hpp"
 #include "tools/extended_kalman_filter.hpp"
 
 namespace auto_aim
@@ -101,6 +104,10 @@ public:
   };
   AimChoice choose_at(double fly_time, double max_delta) const;
 
+  // 重捕时沿用上次锁定的方向（前哨站转向整局不变，不该从零重估）。
+  // 只恢复方向，相位仍由观测重新确定——相位会随时间变，方向不会。
+  void restore_dir(int dir);
+
 private:
   // 状态：x y z theta（4 维）
   tools::ExtendedKalmanFilter ekf_;
@@ -130,6 +137,48 @@ private:
   void try_lock_phase();
   int match_armor_id(const Armor & armor) const;
   double armor_z(int id) const;
+};
+
+
+// ============================================================================
+// 前哨站独立跟踪器（自带状态机）
+// ============================================================================
+// 与 Tracker 完全平行的一条链路：自己筛前哨站装甲板、自己管生命周期。
+// 整车的 Tracker / Target 一行不改，所以不会影响整车 tracking。
+//
+// 为什么要自己的状态机而不复用 Tracker 的：
+//   Tracker 的 detect_count / temp_lost_count 是为"目标可能开走、可能换车"
+//   设计的。前哨站是固定建筑，丢失只可能是遮挡或识别抖动，而且它的 phase /
+//   方向一旦锁定就长期有效——重捕时应当**沿用**而不是重新收敛。
+//   这两种生命周期语义不同，混在一个状态机里只会互相将就。
+class OutpostTracker
+{
+public:
+  explicit OutpostTracker(const std::string & config_path);
+
+  // 从当帧所有装甲板里挑出前哨站并跟踪。
+  // 返回空 = 当前没有可用的前哨站目标（未捕获 / 已丢失 / 方向未锁）。
+  // armors 只读不改，避免与整车链路争用同一份数据。
+  std::vector<OutpostTarget> track(
+    const std::list<Armor> & armors, std::chrono::steady_clock::time_point t, Solver & solver);
+
+  std::string state() const { return state_; }
+
+private:
+  OutpostTarget target_;
+  std::string state_ = "lost";
+  int detect_count_ = 0;
+  int lost_count_ = 0;
+
+  int min_detect_count_;
+  int max_lost_count_;
+  double lost_timeout_;
+  std::chrono::steady_clock::time_point last_t_;
+  bool has_last_t_ = false;
+
+  // 方向/相位跨重捕缓存：前哨站是固定建筑，这些量重捕后应沿用而非重估
+  bool cache_valid_ = false;
+  int cache_dir_ = 0;
 };
 
 }  // namespace auto_aim

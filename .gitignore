@@ -1,6 +1,11 @@
 .vscode/
 .github/
 build/
+build_*/
+*.o
+*.a
+CMakeCache.txt
+CMakeFiles/
 Camera/
 logs/
 assets/img_with_q/

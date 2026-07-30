@@ -4,6 +4,8 @@
 #include <cmath>
 #include <numeric>
 
+#include <yaml-cpp/yaml.h>
+
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
@@ -353,6 +355,15 @@ Eigen::VectorXd OutpostTarget::ekf_x() const
   return out;
 }
 
+void OutpostTarget::restore_dir(int dir)
+{
+  if (dir == 0) return;
+  spin_dir_ = dir;
+  dir_locked_ = true;
+  dir_score_ = dir > 0 ? DIR_LOCK_SCORE : -DIR_LOCK_SCORE;
+  tools::logger()->info("[Outpost] 重捕沿用方向 {}", dir > 0 ? "CCW(+)" : "CW(-)");
+}
+
 bool OutpostTarget::diverged() const
 {
   const auto & x = ekf_.x;
@@ -366,6 +377,99 @@ bool OutpostTarget::diverged() const
     return true;
   }
   return false;
+}
+
+
+// ============================================================================
+// OutpostTracker
+// ============================================================================
+OutpostTracker::OutpostTracker(const std::string & config_path)
+{
+  auto yaml = YAML::LoadFile(config_path);
+  // 全部用带默认值的读法：这条链路是新加的，不能让没同步改 yaml 的机器人开不了机
+  min_detect_count_ =
+    yaml["outpost_min_detect_count"] ? yaml["outpost_min_detect_count"].as<int>() : 3;
+  max_lost_count_ =
+    yaml["outpost_max_temp_lost_count"] ? yaml["outpost_max_temp_lost_count"].as<int>() : 150;
+  lost_timeout_ = yaml["lost_timeout"] ? yaml["lost_timeout"].as<double>() : 0.5;
+}
+
+std::vector<OutpostTarget> OutpostTracker::track(
+  const std::list<Armor> & armors, std::chrono::steady_clock::time_point t, Solver & solver)
+{
+  // 只取前哨站，且只取一块（前哨站是唯一目标，多块时取最靠近图像中心的）
+  const Armor * pick = nullptr;
+  double best = 1e18;
+  for (const auto & a : armors) {
+    if (a.name != ArmorName::outpost) continue;
+    auto d = cv::norm(a.center - cv::Point2f(720, 540));
+    if (d < best) {
+      best = d;
+      pick = &a;
+    }
+  }
+
+  // 长时间没帧就整体复位（比如切换目标或程序空转），避免拿旧状态硬推
+  if (has_last_t_ && tools::delta_time(t, last_t_) > lost_timeout_) {
+    state_ = "lost";
+    detect_count_ = 0;
+    lost_count_ = 0;
+  }
+  last_t_ = t;
+  has_last_t_ = true;
+
+  if (pick == nullptr) {
+    // 丢帧：保持状态，靠常量转速继续外推，直到超过容忍上限
+    if (state_ != "lost") {
+      lost_count_++;
+      if (lost_count_ > max_lost_count_) {
+        state_ = "lost";
+        detect_count_ = 0;
+        tools::logger()->debug("[OutpostTracker] lost");
+      } else {
+        target_.predict(t);
+      }
+    }
+    if (state_ == "tracking") return {target_};
+    return {};
+  }
+
+  Armor armor = *pick;  // 拷一份再 solve，不改调用方的 armors
+  solver.solve(armor);
+
+  if (state_ == "lost") {
+    target_ = OutpostTarget(armor, t);
+    // 沿用上次锁定的方向：前哨站转向整局不变，重捕不该从零重估
+    if (cache_valid_ && cache_dir_ != 0) target_.restore_dir(cache_dir_);
+    state_ = "detecting";
+    detect_count_ = 1;
+    lost_count_ = 0;
+    return {};
+  }
+
+  target_.predict(t);
+  target_.update(armor);
+  lost_count_ = 0;
+
+  if (target_.diverged()) {
+    tools::logger()->debug("[OutpostTracker] diverged, reset");
+    state_ = "lost";
+    detect_count_ = 0;
+    return {};
+  }
+
+  if (state_ == "detecting") {
+    detect_count_++;
+    if (detect_count_ >= min_detect_count_) state_ = "tracking";
+    return {};
+  }
+
+  // tracking：缓存方向供重捕沿用
+  if (target_.dir_locked()) {
+    cache_valid_ = true;
+    cache_dir_ = target_.spin_dir();
+  }
+  return {target_};
 }
 
 }  // namespace auto_aim
