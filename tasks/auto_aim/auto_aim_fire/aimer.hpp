@@ -35,6 +35,9 @@ private:
   double high_speed_delay_time_;
   double low_speed_delay_time_;
   double decision_speed_;
+  // 小陀螺判据阈值（rad/s）。以前这里误用半径 [8] 且硬编码 2，导致小陀螺分支
+  // 从未执行；现在按角速度 |w| 判，并可由 yaml 调（缺省 2.0 = 原意图值）。
+  double spin_omega_thresh_;
 
   AimPoint choose_aim_point(const Target & target);
 };

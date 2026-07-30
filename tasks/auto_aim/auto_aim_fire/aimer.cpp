@@ -21,6 +21,9 @@ Aimer::Aimer(const std::string & config_path)
   high_speed_delay_time_ = yaml["high_speed_delay_time"].as<double>();
   low_speed_delay_time_ = yaml["low_speed_delay_time"].as<double>();
   decision_speed_ = yaml["decision_speed"].as<double>();
+  // 缺省 2.0：与修 bug 之前"本来想判的"阈值一致，不给所有机器人 yaml 加必填项
+  spin_omega_thresh_ =
+    yaml["spin_omega_thresh"] ? yaml["spin_omega_thresh"].as<double>() : 2.0;
 }
 
 io::Command Aimer::aim(
@@ -32,7 +35,9 @@ io::Command Aimer::aim(
 
   auto ekf = target.ekf();
   double delay_time =
-    target.ekf_x()[7] > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
+    // 取绝对值：w 带符号，逆时针小陀螺 w<0 时原写法永远走不到 high_speed 分支
+    std::abs(target.ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_
+                                                  : low_speed_delay_time_;
 
   if (bullet_speed < 14) bullet_speed = 23;
 
@@ -135,7 +140,10 @@ AimPoint Aimer::choose_aim_point(const Target & target)
   }
 
   // 不考虑小陀螺
-  if (std::abs(target.ekf_x()[8]) <= 2 && target.name != ArmorName::outpost) {
+  // 注意下标：[7] 是角速度 w，[8] 是半径 r。这里以前误用 [8]，而 r 恒在
+  // 0.067~0.32 m，|r|<=2 永真 → 下面的小陀螺分支（coming/leaving 窗口）从未
+  // 执行过，yaml 里的 comming_angle / leaving_angle 一直是死参数。
+  if (std::abs(target.ekf_x()[7]) <= spin_omega_thresh_ && target.name != ArmorName::outpost) {
     // 选择在可射击范围内的装甲板
     std::vector<int> id_list;
     for (int i = 0; i < armor_num; i++) {
