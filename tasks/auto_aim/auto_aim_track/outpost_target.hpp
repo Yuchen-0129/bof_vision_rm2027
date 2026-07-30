@@ -81,6 +81,7 @@ public:
 
   OutpostTarget() = default;
   OutpostTarget(const Armor & armor, std::chrono::steady_clock::time_point t);
+  void set_gate(double m) { gate_m_ = m; }
 
   void predict(std::chrono::steady_clock::time_point t);
   void update(const Armor & armor);
@@ -103,6 +104,7 @@ public:
   // 实测框跳 14 次里有 12 次都在"方向未锁 + 转速未收敛"这两个阶段，
   // 稳态只剩 2 次 —— 所以这两个阶段就该老实不发瞄准点。
   bool w_converged() const { return switch_seen_ >= kWSwitchNeeded; }
+  static constexpr int kWSwitchNeededPublic = 3;
 
   // 整体就绪：方向锁定 且 转速收敛，才认为可以拿去瞄准
   bool ready() const { return dir_locked_ && w_converged(); }
@@ -129,6 +131,20 @@ public:
   // 只恢复方向，相位仍由观测重新确定——相位会随时间变，方向不会。
   void restore_dir(int dir);
 
+  // 重捕时沿用上次学到的转速。转速是物理常量（整局不变），重建后从先验
+  // 2.5133 重新学要 3 次换板 ≈ 2.3s，这段时间相位按错误转速外推会漂 —— 
+  // 实测 12.9s 的录像里因此一次都没 ready。所以必须跨重建保留。
+  void restore_w(double w_mag, int switch_seen);
+
+  // Tracker 在"丢帧后首次重新拿到观测"时调用，触发渐进收敛
+  void mark_reacquire(int frames) { reacquire_frames_ = frames; }
+
+  // 重捕时沿用上次的旋转中心。前哨站是固定建筑，中心是常量——
+  // 重建时由"单块观测板 + 半径"反推中心，5m 外 PnP 纵深噪声会让它偏几十 cm
+  // （实测两段稳定值差 56cm，整段 std 26.5cm，而单段内只有 3.5cm）。
+  // 沿用旧中心 + 让 EKF 慢慢修，比每次重新猜准得多。
+  void restore_center(double cx, double cy, double cz);
+
 private:
   // 状态：x y z theta（4 维）
   tools::ExtendedKalmanFilter ekf_;
@@ -138,9 +154,11 @@ private:
   bool converged_ = false;
 
   // —— 旋转方向：离散量，投票 + 滞回，不进 EKF ——
-  // 转速收敛所需的换板观测次数。EMA(0.15) 下 6 次可把先验的 11.7% 偏差
-  // 收掉约 62%，实测第 6 次已到 2.6 rad/s 量级（真值 2.805）
-  static constexpr int kWSwitchNeeded = 6;
+  // 转速收敛所需的换板观测次数。实测（records/2026-07-31_06-55-25）第 3 次
+  // 就到 0.436 r/s（真值 0.444，误差 1.8%），6 次门槛过高：那份录像 12.9s
+  // 只攒到 4 次就判 lost，重建后计数归零 → ready() 永远为假 → 前哨站链路
+  // 从不接管。降到 3，配合 restore_w 跨重建保留，实际首次收敛更快。
+  static constexpr int kWSwitchNeeded = 3;
 
   // 转速幅值在线估计：用"同一块板转过 120° 的时间"更新，比对 yaw 差分更抗噪
   // （单帧 yaw 噪声 ±6°，而一次换板积累 120°，相对误差小 20 倍）
@@ -149,6 +167,8 @@ private:
   std::chrono::steady_clock::time_point last_switch_t_;
   bool has_switch_t_ = false;
   int last_matched_id_ = -1;
+  double gate_m_ = 0.45;  // 野值门阈值(m)；OP_GATE 环境变量可覆盖（扫参用）
+  int outlier_run_ = 0;   // 连续被拒的帧数，太多说明预测自己错了，得放行重收敛
 
   int spin_dir_ = 0;        // +1 CCW / -1 CW / 0 未定
   bool dir_locked_ = false;
@@ -165,6 +185,18 @@ private:
   // 每块板 z 的 EMA：锁定 phase 后用观测替代常量表，
   // 因为 DZ 表压缩了真实高度差，直接用观测更准
   double z_ema_[3] = {-1000.0, -1000.0, -1000.0};
+
+  // 野值判定：观测与预测差太多就拒绝这一帧的 update。
+  // 前哨站几何完全已知（中心固定、半径恒定、三板互隔 120°），所以"预测得到的
+  // 板位置"很可靠，可以反过来用它筛观测——这是整车模型做不到的（那边半径、
+  // 转速都在估，预测本身就不可信）。
+  bool is_outlier(const Armor & armor, int id) const;
+
+  // 丢失后重现的首帧，观测与外推位置会有落差（丢失期间只能靠常量转速外推）。
+  // 一次性吸收这个落差 → 瞄准点单帧跳 15~21cm（实测 3 次残余跳全是这个原因，
+  // delta 分散在 5.7~33.9°，不是换板边界）。
+  // 对策：重现后若干帧内把观测噪声 R 放大，让 EKF 分几帧渐进收敛而不是一步跳。
+  int reacquire_frames_ = 0;
 
   void vote_direction(const Armor & armor, std::chrono::steady_clock::time_point t);
   void try_lock_phase();
@@ -212,6 +244,10 @@ private:
   // 方向/相位跨重捕缓存：前哨站是固定建筑，这些量重捕后应沿用而非重估
   bool cache_valid_ = false;
   int cache_dir_ = 0;
+  double cache_w_ = 0.0;
+  int cache_switch_seen_ = 0;
+  bool cache_has_center_ = false;
+  double cache_cx_ = 0, cache_cy_ = 0, cache_cz_ = 0;
 };
 
 }  // namespace auto_aim

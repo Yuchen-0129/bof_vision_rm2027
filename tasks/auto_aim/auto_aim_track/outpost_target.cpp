@@ -1,6 +1,7 @@
 #include "outpost_target.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <numeric>
 
@@ -29,6 +30,7 @@ constexpr double Z_EMA_ALPHA = 0.15;
 OutpostTarget::OutpostTarget(const Armor & armor, std::chrono::steady_clock::time_point t)
 : armor_type(armor.type), priority(armor.priority), t_(t)
 {
+  if (const char * e = std::getenv("OP_GATE")) gate_m_ = std::atof(e);
   const Eigen::VectorXd & xyz = armor.xyz_in_world;
   const Eigen::VectorXd & ypr = armor.ypr_in_world;
 
@@ -197,6 +199,29 @@ void OutpostTarget::try_lock_phase()
     zm[1], zm[2]);
 }
 
+bool OutpostTarget::is_outlier(const Armor & armor, int id) const
+{
+  // 只在收敛后才筛：没收敛时预测不可信，筛了会永远收不了
+  if (!dir_locked_) return false;
+
+  const auto & x = ekf_.x;
+  double th = tools::limit_rad(x[3] + id * 2 * M_PI / OUTPOST_ARMOR_NUM);
+  double px = x[0] - OUTPOST_R * std::cos(th);
+  double py = x[1] - OUTPOST_R * std::sin(th);
+  double d = std::hypot(armor.xyz_in_world[0] - px, armor.xyz_in_world[1] - py);
+
+  // 阈值扫参（records/2026-07-31_06-57-17，57s；中心 std 越小越稳）：
+  //   不设门: 8.7cm    0.60: 5.2cm    0.50: 4.0cm
+  //   0.45 : 3.5cm ←采用   0.40: 3.0cm    0.24: 12.3cm(过紧，正常观测被拒)
+  // 取 0.45 而非更小的 0.40：相邻板真实间距 47.9cm，门设到 0.40 已接近
+  // "把相邻板也当野值"的边界，留一点余量更稳妥。
+  // 背景：观测位置逐帧跳 p95=53cm、max=207cm，5.57% 的帧是野值（单帧 PnP
+  // 出错），被 EKF 无条件吸收后中心一次被拖偏 1.3m —— 这就是实车
+  // "有时发散打到周围"的直接原因。
+  const double kGate = gate_m_;  // 默认 0.45，见 hpp 的扫参记录
+  return d > kGate;
+}
+
 void OutpostTarget::update(const Armor & armor)
 {
   update_count_++;
@@ -204,6 +229,20 @@ void OutpostTarget::update(const Armor & armor)
   vote_direction(armor, t_);
 
   int id = match_armor_id(armor);
+
+  // 野值门：拒绝离预测太远的观测，避免单帧 PnP 出错把中心拖走
+  if (is_outlier(armor, id)) {
+    outlier_run_++;
+    // 但不能一直拒：万一是预测自己跑偏了（比如长时间遮挡后重现），
+    // 连续拒 kOutlierRunMax 帧就放行一次，让 EKF 有机会重新收敛
+    constexpr int kOutlierRunMax = 12;
+    if (outlier_run_ < kOutlierRunMax) return;
+    tools::logger()->debug("[Outpost] 连续 {} 帧野值，放行以重收敛", outlier_run_);
+    outlier_run_ = 0;
+  } else {
+    outlier_run_ = 0;
+  }
+
   last_id = id;
 
   // —— 在线估转速：用换板事件而非 yaw 差分 ——
@@ -213,12 +252,14 @@ void OutpostTarget::update(const Armor & armor)
   if (dir_locked_ && last_matched_id_ >= 0 && id != last_matched_id_) {
     int step =
       ((id - last_matched_id_) % OUTPOST_ARMOR_NUM + OUTPOST_ARMOR_NUM) % OUTPOST_ARMOR_NUM;
-    // 正序方向与 spin_dir_ 的关系（实测确认，别按直觉推）：
-    // 板方位 theta_id = theta + id*120°。w<0 时 theta 递减，而观测板始终是
-    // "转到视线方向"的那块，为了让 theta_id 保持在视线附近，匹配到的 id 必须
-    // 递增来补偿。所以 CW(-1) 时正序同样是 id 递增（step=+1）。
-    // 实测日志：dir=-1 时 step 恒为 1（0→1→2→0），验证了这一点。
-    constexpr int expect = 1;
+    // 正序 step 与 spin_dir_ 的关系（两份录像实测，别按直觉推也别只测一个方向）：
+    //   dir=-1 (CW)  → step 恒为 1   （records/2026-07-31_06-22-34）
+    //   dir=+1 (CCW) → step 恒为 2   （records/2026-07-31_06-57-17）
+    // 板方位 theta_id = theta + id*120°，观测板始终是"转到视线方向"那块，
+    // 匹配到的 id 变化方向与 theta 的推进方向相反，所以 step 与 dir 反相关。
+    // 我最初只在 CW 录像上验证，硬编码 expect=1，结果 CCW 下估速被全部挡掉、
+    // w_mag 永远停在先验 2.5133，相位继续漂 → 实车表现为"有时发散打到周围"。
+    const int expect = (spin_dir_ > 0) ? OUTPOST_ARMOR_NUM - 1 : 1;
     if (step == expect) {
       if (has_switch_t_) {
         double dt_sw = tools::delta_time(t_, last_switch_t_);
@@ -286,7 +327,14 @@ void OutpostTarget::update(const Armor & armor)
   //
   // 正确做法：两者都填**真实**精度，让 EKF 自己权衡。
   // 5m 外 PnP 横向误差实测 5~10cm → σ=7cm；optimize_yaw 后角度误差约 6° → σ=0.1rad
-  Eigen::VectorXd R_dig{{5e-3, 5e-3, 1e-2}};
+  // 丢失重现后前几帧放大 R：让落差分摊到多帧渐进收敛，而不是单帧跳 15~21cm。
+  // 衰减因子每帧 /2，约 4 帧回到正常（~80ms，肉眼看不出滞后）。
+  double reacq = 1.0;
+  if (reacquire_frames_ > 0) {
+    reacq = 1.0 + 8.0 * reacquire_frames_;
+    reacquire_frames_--;
+  }
+  Eigen::VectorXd R_dig{{5e-3 * reacq, 5e-3 * reacq, 1e-2 * reacq}};
   Eigen::MatrixXd R = R_dig.asDiagonal();
 
   Eigen::VectorXd z_obs(3);
@@ -405,6 +453,28 @@ void OutpostTarget::restore_dir(int dir)
   tools::logger()->info("[Outpost] 重捕沿用方向 {}", dir > 0 ? "CCW(+)" : "CW(-)");
 }
 
+void OutpostTarget::restore_center(double cx, double cy, double cz)
+{
+  // 只在新初值与旧中心相距不远时沿用（太远说明真换了目标，不该套用）
+  // 只在新初值与旧中心相距不远时沿用（太远说明真换了目标，不该套用）
+  if (std::hypot(ekf_.x[0] - cx, ekf_.x[1] - cy) > 1.5) return;
+  ekf_.x[0] = cx;
+  ekf_.x[1] = cy;
+  ekf_.x[2] = cz;
+  // P 给中等值：沿用的中心也不是绝对可信，留出让 EKF 修正的余量
+  ekf_.P(0, 0) = 0.04;
+  ekf_.P(1, 1) = 0.04;
+}
+
+void OutpostTarget::restore_w(double w_mag, int switch_seen)
+{
+  if (w_mag < OUTPOST_W_MIN || w_mag > OUTPOST_W_MAX) return;
+  w_mag_ = w_mag;
+  switch_seen_ = switch_seen;
+  tools::logger()->info(
+    "[Outpost] 重捕沿用转速 {:.4f} rad/s ({:.3f} r/s)", w_mag_, w_mag_ / (2 * M_PI));
+}
+
 bool OutpostTarget::diverged() const
 {
   const auto & x = ekf_.x;
@@ -481,7 +551,13 @@ std::vector<OutpostTarget> OutpostTracker::track(
   if (state_ == "lost") {
     target_ = OutpostTarget(armor, t);
     // 沿用上次锁定的方向：前哨站转向整局不变，重捕不该从零重估
-    if (cache_valid_ && cache_dir_ != 0) target_.restore_dir(cache_dir_);
+    if (cache_valid_ && cache_dir_ != 0) {
+      target_.restore_dir(cache_dir_);
+      // 转速也一并沿用：物理常量，重建后没必要从先验重新学
+      if (cache_switch_seen_ > 0) target_.restore_w(cache_w_, cache_switch_seen_);
+      // 中心同样沿用：固定建筑，重新由单板反推会偏几十 cm
+      if (cache_has_center_) target_.restore_center(cache_cx_, cache_cy_, cache_cz_);
+    }
     state_ = "detecting";
     detect_count_ = 1;
     lost_count_ = 0;
@@ -489,6 +565,8 @@ std::vector<OutpostTarget> OutpostTracker::track(
   }
 
   target_.predict(t);
+  // 刚从丢帧中恢复：让 EKF 分几帧渐进吸收落差，避免瞄准点单帧跳
+  if (lost_count_ > 0) target_.mark_reacquire(3);
   target_.update(armor);
   lost_count_ = 0;
 
@@ -509,6 +587,15 @@ std::vector<OutpostTarget> OutpostTracker::track(
   if (target_.dir_locked()) {
     cache_valid_ = true;
     cache_dir_ = target_.spin_dir();
+    if (target_.w_converged()) {
+      cache_w_ = target_.w_mag();
+      cache_switch_seen_ = OutpostTarget::kWSwitchNeededPublic;
+      auto xx = target_.ekf_x();
+      cache_cx_ = xx[0];
+      cache_cy_ = xx[2];
+      cache_cz_ = xx[4];
+      cache_has_center_ = true;
+    }
   }
   return {target_};
 }

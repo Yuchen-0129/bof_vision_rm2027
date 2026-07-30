@@ -114,9 +114,13 @@ int main(int argc, char * argv[])
     // 前哨站有解时优先用它的 cmd 覆盖：前哨站是固定建筑、转速已知，
     // 它的解比整车模型可靠得多。没解时（未捕获/方向未锁/无板朝向我方）
     // 完全不动整车的 command，整车行为保持原样。
+    bool outpost_took_over = false;
     if (!outpost_targets.empty()) {
       auto oc = outpost_aimer.aim(outpost_targets, gimbal_state.bullet_speed);
-      if (oc.control) command = oc;
+      if (oc.control) {
+        command = oc;
+        outpost_took_over = true;
+      }
     }
 
     // 使用串口发送命令
@@ -223,6 +227,31 @@ int main(int argc, char * argv[])
     data["cmd_yaw"] = command.yaw*57.3;
     data["cmdl_pitch"] = command.pitch*57.3;
 
+
+    // 前哨站独立链路的状态：不写进 signals 就没法判断它到底有没有在工作
+    // （signals 里其余字段全是整车 11 维模型的量）
+    data["op_state"] = outpost_tracker.state();
+    data["op_n"] = static_cast<int>(outpost_targets.size());
+    data["op_takeover"] = outpost_took_over ? 1 : 0;
+    if (!outpost_targets.empty()) {
+      const auto & ot = outpost_targets.front();
+      data["op_x"] = ot.ekf_x()[0];
+      data["op_y"] = ot.ekf_x()[2];
+      data["op_z"] = ot.ekf_x()[4];
+      data["op_a"] = ot.ekf_x()[6] * 57.3;
+      data["op_w"] = ot.ekf_x()[7];
+      data["op_wmag"] = ot.w_mag();
+      data["op_dir"] = ot.spin_dir();
+      data["op_ready"] = ot.ready() ? 1 : 0;
+      data["op_dirlock"] = ot.dir_locked() ? 1 : 0;
+      data["op_wconv"] = ot.w_converged() ? 1 : 0;
+      data["op_id"] = ot.last_id;
+    }
+    if (outpost_aimer.debug_valid) {
+      data["op_aim_x"] = outpost_aimer.debug_xyza[0];
+      data["op_aim_y"] = outpost_aimer.debug_xyza[1];
+      data["op_aim_z"] = outpost_aimer.debug_xyza[2];
+    }
 
     plotter.plot(data);
     if (signal_recorder) signal_recorder->record(t, data);
