@@ -148,6 +148,10 @@ int main(int argc, char * argv[])
     auto yaw = tools::eulers(q, 2, 1, 0)[0];
     data["gimbal_yaw"] = yaw * 57.3;
     data["cmd_yaw"] = command.yaw * 57.3;
+    // pitch 也要记：pitch_offset 是最常调的参数之一，只记 yaw 的话打高/打低
+    // 这类问题在 jsonl 里根本看不出来
+    data["cmd_pitch"] = command.pitch * 57.3;
+    data["cmd_control"] = command.control ? 1 : 0;
     data["shoot"] = command.shoot;
 
     if (!targets.empty()) {
