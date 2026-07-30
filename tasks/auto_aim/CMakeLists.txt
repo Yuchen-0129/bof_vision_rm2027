@@ -21,6 +21,7 @@ add_library(auto_aim_track OBJECT
     common/armor.cpp
     auto_aim_track/solver.cpp
     auto_aim_track/target.cpp
+    auto_aim_track/outpost_target.cpp
     auto_aim_track/tracker.cpp
 )
 

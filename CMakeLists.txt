@@ -98,3 +98,6 @@ target_link_libraries(planner_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim too
 
 add_executable(planner_test_offline tests/planner_test_offline.cpp)
 target_link_libraries(planner_test_offline ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+
+add_executable(outpost_target_test tests/outpost_target_test.cpp)
+target_link_libraries(outpost_target_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)

@@ -1,0 +1,137 @@
+#ifndef AUTO_AIM__OUTPOST_TARGET_HPP
+#define AUTO_AIM__OUTPOST_TARGET_HPP
+
+#include <Eigen/Dense>
+#include <chrono>
+#include <deque>
+#include <vector>
+
+#include "tasks/auto_aim/common/armor.hpp"
+#include "tools/extended_kalman_filter.hpp"
+
+namespace auto_aim
+{
+// ============================================================================
+// 前哨站专用跟踪器
+// ============================================================================
+//
+// 为什么不复用整车 Target：
+//   整车 Target 是 11 维（x vx y vy z vz a w r l h），把 r 和 w 都当自由变量估，
+//   因为对方步兵的半径、转速、加减速都是未知的。前哨站不是这样——它的几何和
+//   转速由规则写死，唯一未知的是**旋转方向**和**当前相位**。
+//
+//   把已知量交给 EKF 去"估"，等于白送它自由度去拟合观测噪声。实测
+//   records/2026-07-31_05-45-29（24.7s、1042 帧有 target）：
+//     - |w| p50 = 2.512 rad/s，与规则值 0.4r/s = 2.513 精确吻合 → w 是常量
+//     - r  = 0.2774 ± 0.0035 m，与规则值 0.2765 吻合         → r 是常量
+//     - 但 w 的符号翻转 9 次，|w| 一度冲到 4.02（超出 2.51 钳位）
+//     - t=11.70 / 17.00 / 21.40 各只丢 1 帧，w 就被打回 0 重新收敛
+//     - cmd_yaw 有 88 帧（6.7%）单帧跳 >5°，p95 83°、max 89.7°
+//   也就是说：不稳定不是滤波调参不到位，而是模型里塞了本不该估的自由度。
+//
+// 本类的状态只有 4 维（旋转中心 + 相位）：
+//     [ x, y, z, theta ]
+//   - x,y,z  旋转中心位置。前哨站是固定建筑，不会平移，所以不建速度项
+//            （整车模型的 vx/vy/vz 在这里纯粹是噪声入口）
+//   - theta  0 号板的方位相位，唯一真正随时间演化的量
+//
+//   w（转速）不是状态，是常量 OUTPOST_W * spin_dir_。
+//   r（半径）不是状态，是常量 OUTPOST_R。
+//   三块板的高度阶梯也是常量表，见 OUTPOST_DZ。
+//
+// 旋转方向：不做滤波，用「a 的差分投票 + 滞回锁定」。方向只有 ±1 两种取值，
+//   是离散量，交给 EKF 连续估计本身就是错的建模（这正是 w 符号翻转的来源）。
+//   锁定后除非出现足够多的反向证据才允许翻转，避免噪声把方向抖翻。
+// ============================================================================
+
+// —— 规则常量（RMUC 2026 前哨站）——
+constexpr double OUTPOST_W = 0.4 * 2 * M_PI;  // 0.4 r/s = 2.5133 rad/s
+constexpr double OUTPOST_R = 0.2765;          // 旋转半径 m
+constexpr int OUTPOST_ARMOR_NUM = 3;          // 三块装甲板，互隔 120°
+
+// 三块板的高度阶梯（顺时针 1→2→3 递增 10.2cm）。
+// phase 表示 0 号板当前对应 L/H/M 中哪一阶；EKF id 按 yaw 递增（CCW）。
+constexpr double OUTPOST_STEP = 0.102;
+constexpr double OUTPOST_DZ[3][3] = {
+  {0.0, 2 * OUTPOST_STEP, OUTPOST_STEP},  // phase=0: plate-0 = L
+  {2 * OUTPOST_STEP, OUTPOST_STEP, 0.0},  // phase=1: plate-0 = H
+  {OUTPOST_STEP, 0.0, 2 * OUTPOST_STEP},  // phase=2: plate-0 = M
+};
+
+class OutpostTarget
+{
+public:
+  ArmorName name = ArmorName::outpost;
+  ArmorType armor_type;
+  ArmorPriority priority;
+  int last_id = 0;  // debug only
+
+  OutpostTarget() = default;
+  OutpostTarget(const Armor & armor, std::chrono::steady_clock::time_point t);
+
+  void predict(std::chrono::steady_clock::time_point t);
+  void update(const Armor & armor);
+
+  // —— 对外接口，与 Target 保持一致，便于 aimer / main 共用 ——
+  // 完整 11 维向量，布局与整车 Target 相同（x vx y vy z vz a w r l h），
+  // 这样 aimer、plotter、signals 的既有下标全部沿用，不用改下游。
+  // vx/vy/vz 恒 0（前哨站不平移），w = 常量×方向，r = 常量。
+  Eigen::VectorXd ekf_x() const;
+  const tools::ExtendedKalmanFilter & ekf() const { return ekf_; }
+  std::vector<Eigen::Vector4d> armor_xyza_list() const;
+
+  bool diverged() const;
+  bool convergened() const { return converged_; }
+
+  // 旋转方向：+1 / -1，未锁定时为 0
+  int spin_dir() const { return spin_dir_; }
+  bool dir_locked() const { return dir_locked_; }
+  int phase() const { return phase_; }
+
+  // 给定弹丸飞行时间，返回命中时刻"最先正对我方"的那块板的 xyza。
+  // 前哨站打的是远距离（5m 外，v=23 时飞行 217ms，期间目标转 31°），
+  // 所以必须按命中时刻选板，而不是按当前帧选——按当前帧选的话，
+  // 板在子弹到达前就已经转走 31°，等于必偏。
+  // 返回 valid=false 表示该时刻没有板处于可打角度内。
+  struct AimChoice
+  {
+    bool valid;
+    Eigen::Vector4d xyza;
+    double delta_angle;  // 命中时刻该板法线与视线的夹角 rad，供开火判据用
+  };
+  AimChoice choose_at(double fly_time, double max_delta) const;
+
+private:
+  // 状态：x y z theta（4 维）
+  tools::ExtendedKalmanFilter ekf_;
+  std::chrono::steady_clock::time_point t_;
+
+  int update_count_ = 0;
+  bool converged_ = false;
+
+  // —— 旋转方向：离散量，投票 + 滞回，不进 EKF ——
+  int spin_dir_ = 0;        // +1 CCW / -1 CW / 0 未定
+  bool dir_locked_ = false;
+  double dir_score_ = 0.0;  // 正向证据累积，超阈值锁定；带滞回防抖翻
+  double last_obs_yaw_ = 0.0;
+  bool has_last_obs_ = false;
+  std::chrono::steady_clock::time_point last_obs_t_;
+
+  // —— 相位（哪块板是 L）：同样是离散量，用最小二乘选一次后锁定 ——
+  int phase_ = 0;
+  bool phase_locked_ = false;
+  std::vector<std::vector<double>> z_obs_{3};  // 每块板的 z 观测累积
+
+  // 每块板 z 的 EMA：锁定 phase 后用观测替代常量表，
+  // 因为 DZ 表压缩了真实高度差，直接用观测更准
+  double z_ema_[3] = {-1000.0, -1000.0, -1000.0};
+
+  void vote_direction(const Armor & armor, std::chrono::steady_clock::time_point t);
+  void try_lock_phase();
+  int match_armor_id(const Armor & armor) const;
+  double armor_z(int id) const;
+};
+
+}  // namespace auto_aim
+
+#endif  // AUTO_AIM__OUTPOST_TARGET_HPP
