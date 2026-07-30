@@ -1,6 +1,7 @@
 #include <fmt/core.h>
 
 #include <chrono>
+#include <memory>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
@@ -14,6 +15,8 @@
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 #include "tools/plotter.hpp"
+#include "tools/record_config.hpp"
+#include "tools/signal_recorder.hpp"
 
 const std::string keys =
   "{help h usage ? |                   | 输出命令行参数说明 }"
@@ -36,7 +39,21 @@ int main(int argc, char * argv[])
   auto end_index = cli.get<int>("end-index");
 
   tools::Plotter plotter;
+
+  // 回放也支持 signals 录制（视频不录——输入本身就是视频）。这样"改算法 → 回放
+  // → 比对两次 jsonl"能在没有硬件的机器上闭环，不必上车。
+  // 用同一套 yaml 开关：record_signals / signals_low_rate_hz / signals_low_keys。
+  std::unique_ptr<tools::SignalRecorder> signal_recorder;
   tools::Exiter exiter;
+
+  {
+    auto rc = tools::RecordConfig::from_file(config_path);
+    if (rc.signals) {
+      signal_recorder =
+        std::make_unique<tools::SignalRecorder>(rc.signals_low_rate_hz, rc.signals_low_keys);
+      tools::logger()->info("[Replay] signals → {}", signal_recorder->path());
+    }
+  }
 
   auto video_path = fmt::format("{}.avi", input_path);
   auto text_path = fmt::format("{}.txt", input_path);
@@ -187,6 +204,9 @@ int main(int argc, char * argv[])
     }
 
     plotter.plot(data);
+    // 用录制帧自带的时间戳，而非 now()，这样 jsonl 的 t 轴与原始录像一致，
+    // 两次回放（改算法前/后）能逐帧对上直接 diff
+    if (signal_recorder) signal_recorder->record(timestamp, data);
 
     cv::resize(img, img, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
     cv::imshow("reprojection", img);

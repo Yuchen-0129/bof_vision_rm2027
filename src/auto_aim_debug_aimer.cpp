@@ -16,7 +16,9 @@
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 #include "tools/plotter.hpp"
+#include "tools/record_config.hpp"
 #include "tools/recorder.hpp"
+#include "tools/signal_recorder.hpp"
 
 using namespace std::chrono;
 
@@ -35,7 +37,11 @@ int main(int argc, char * argv[])
 
   tools::Exiter exiter;// 退出器
   tools::Plotter plotter;// 绘图器
-  tools::Recorder recorder;// 录制器
+  // 录制器：三类录制的开关都在 yaml 里（record_video / record_signals /
+  // record_serial_raw，后者由 io::Gimbal 自己读）。缺省值 = 原行为。
+  auto rec = tools::make_recorders(config_path);
+  auto & recorder = rec.video;
+  auto & signal_recorder = rec.signals;
 
   io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
@@ -71,7 +77,7 @@ int main(int argc, char * argv[])
       last_mode = mode;
     }
 
-    recorder.record(img, q, t);
+    if (recorder) recorder->record(img, q, t);
 
     // 设定 gimbal 到 world 的旋转矩阵
     solver.set_R_gimbal2world(q);
@@ -105,7 +111,9 @@ int main(int argc, char * argv[])
     tools::draw_text(img, fmt::format("[{}]", tracker.state()), {10, 30}, {255, 255, 255});
 
     nlohmann::json data;
-    data["t"] = tools::delta_time(std::chrono::steady_clock::now(), t0);
+    // 键名不能叫 "t"：SignalRecorder 会用帧时间戳覆盖 "t"，这个耗时就永远进不了
+    // jsonl。同时换成 ms，与日志里 yolo/tracker 耗时同量纲。
+    data["loop_ms"] = tools::delta_time(std::chrono::steady_clock::now(), t0) * 1e3;
 
     // 装甲板原始观测数据
     data["armor_num"] = armors.size();
@@ -198,6 +206,7 @@ int main(int argc, char * argv[])
 
 
     plotter.plot(data);
+    if (signal_recorder) signal_recorder->record(t, data);
 
     cv::resize(img, img, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
     cv::imshow("reprojection", img);

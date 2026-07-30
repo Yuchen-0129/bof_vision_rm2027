@@ -13,6 +13,7 @@ add_library(
   plotter.cpp
   ransac_sine_fitter.cpp
   recorder.cpp
+  signal_recorder.cpp
   resistance_trajectory.cpp
   trajectory.cpp
 )

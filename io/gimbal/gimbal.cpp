@@ -14,6 +14,14 @@ Gimbal::Gimbal(const std::string & config_path)
   auto yaml = tools::load(config_path);
   auto com_port = tools::read<std::string>(yaml, "com_port");
 
+  // 串口字节级内录：缺 key 按关闭处理，不用 tools::read（它缺 key 会 exit(1)，
+  // 会让所有没同步改 yaml 的机器人开不了机）
+  if (yaml["record_serial_raw"]) record_serial_raw_ = yaml["record_serial_raw"].as<bool>();
+  if (record_serial_raw_) {
+    raw_recorder_ = std::make_unique<tools::RawSerialRecorder>();
+    tools::logger()->info("[Gimbal] 串口字节内录已启用 → records/<ts>_rx.bin / _tx.bin");
+  }
+
   try {
     serial_.setPort(com_port);
     serial::Timeout timeout = serial::Timeout::simpleTimeout(100); // 100毫秒
@@ -94,6 +102,10 @@ void Gimbal::send(io::VisionToGimbal VisionToGimbal)
   tx_data_.crc16 = tools::get_crc16(
     reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_) - sizeof(tx_data_.crc16));
 
+  if (raw_recorder_) {
+    raw_recorder_->record_tx(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
+  }
+
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
   } catch (const std::exception & e) {
@@ -115,6 +127,10 @@ void Gimbal::send(
   tx_data_.pitch_acc = pitch_acc;
   tx_data_.crc16 = tools::get_crc16(
     reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_) - sizeof(tx_data_.crc16));
+
+  if (raw_recorder_) {
+    raw_recorder_->record_tx(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
+  }
 
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
@@ -168,6 +184,12 @@ void Gimbal::read_thread()
     }
 
     error_count = 0;
+
+    // 只录 CRC 通过的完整帧，避免把噪声写进复盘文件
+    if (raw_recorder_) {
+      raw_recorder_->record_rx(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_));
+    }
+
     Eigen::Quaterniond q(rx_data_.q[0], rx_data_.q[1], rx_data_.q[2], rx_data_.q[3]);
     queue_.push({q, t});
 

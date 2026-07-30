@@ -79,6 +79,30 @@ can_interface: "can0"
 
 #####-----gimbal参数-----#####
 com_port: "/dev/ttyACM0"
+#####-----录制开关-----#####
+# 三类录制各自独立开关，文件名前缀共用同一个进程级时间戳，便于四类文件互相对齐。
+record_video: true # 视频+四元数 → records/<时间戳>.avi + .txt（缺省 true）
+record_signals: true # EKF/cmd/tracker 等调试量 → records/<时间戳>_signals.jsonl（缺省 false）
+record_serial_raw: false # 上下位机串口字节流 → records/<时间戳>_rx.bin / _tx.bin（缺省 false）
+record_video_fps: 30 # 视频抽帧率。相机跑得比这快时会丢帧，于是视频帧数少于 signals
+                     # 行数——对齐必须用 .txt 里的时间戳，不能用帧序号。
+
+# signals 分频：按 key 分档，不是按行分档。
+# 未列进 signals_low_keys 的 key 每帧都写（EKF 状态、cmd、云台反馈必须留在全速档，
+# 抖动/收敛分析都是逐帧算的）；列进去的按 signals_low_rate_hz 限流。
+# 低频 key 在多数行里缺席（不是 0，是没这个键），离线用 pandas ffill() 还原：
+#   df = pd.read_json("records/xxx_signals.jsonl", lines=True).ffill()
+# signals_low_rate_hz 设 0 表示低频 key 只写一次（适合整场不变的量）。
+# 不配这两项 = 全部信号全速 = 与分频功能加入之前行为一致。
+signals_low_rate_hz: 5 # Hz
+signals_low_keys:
+  - tracker_state
+  - bullet_speed
+  - bullet_count
+  - P_x
+  - P_y
+  - P_z
+  - P_r
 yaw_kp: 0
 yaw_kd: 0
 pitch_kp: 0

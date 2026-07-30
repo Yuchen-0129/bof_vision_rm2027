@@ -4,12 +4,14 @@
 #include <Eigen/Geometry>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <tuple>
 
 #include "serial/serial.h"
+#include "tools/recorder.hpp"
 #include "tools/thread_safe_queue.hpp"
 
 namespace io
@@ -97,6 +99,10 @@ private:
   GimbalState state_;
   tools::ThreadSafeQueue<std::tuple<Eigen::Quaterniond, std::chrono::steady_clock::time_point>>
     queue_{1000};
+
+  // 串口字节级内录：按 yaml 的 record_serial_raw 开关启用，关闭时为 nullptr
+  bool record_serial_raw_ = false;
+  std::unique_ptr<tools::RawSerialRecorder> raw_recorder_;
 
   bool read(uint8_t * buffer, size_t size);
   void read_thread();
