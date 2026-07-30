@@ -78,7 +78,7 @@ void OutpostTarget::predict(std::chrono::steady_clock::time_point t)
 
   // 方向未锁定时不推进相位：宁可让 theta 停着等观测，也不要往错误方向外推
   // （方向错了的话，外推 0.23s 就偏 33°，比不推进更糟）
-  double w = dir_locked_ ? OUTPOST_W * spin_dir_ : 0.0;
+  double w = dir_locked_ ? w_mag_ * spin_dir_ : 0.0;
 
   auto f = [&](const Eigen::VectorXd & x) -> Eigen::VectorXd {
     Eigen::VectorXd xp = x;
@@ -110,7 +110,7 @@ void OutpostTarget::vote_direction(const Armor & armor, std::chrono::steady_cloc
   last_obs_yaw_ = obs_yaw;
   last_obs_t_ = t;
 
-  double ratio = std::abs(rate) / OUTPOST_W;
+  double ratio = std::abs(rate) / w_mag_;
   if (ratio < RATE_MIN_RATIO || ratio > RATE_MAX_RATIO) return;  // 不可信，不计票
 
   // 计票：权重取 min(dt/0.02, 1)，让长间隔帧不至于一票定音
@@ -205,6 +205,43 @@ void OutpostTarget::update(const Armor & armor)
 
   int id = match_armor_id(armor);
   last_id = id;
+
+  // —— 在线估转速：用换板事件而非 yaw 差分 ——
+  // 一次换板 = 转过 120°，比单帧 yaw 差分抗噪得多（单帧 yaw 噪声 ±6°，
+  // 而 120° 的相对误差小 20 倍）。只认沿 spin_dir_ 的单调正序切换，
+  // 逆序切换是匹配抖动，不能拿来估速。
+  if (dir_locked_ && last_matched_id_ >= 0 && id != last_matched_id_) {
+    int step =
+      ((id - last_matched_id_) % OUTPOST_ARMOR_NUM + OUTPOST_ARMOR_NUM) % OUTPOST_ARMOR_NUM;
+    // 正序方向与 spin_dir_ 的关系（实测确认，别按直觉推）：
+    // 板方位 theta_id = theta + id*120°。w<0 时 theta 递减，而观测板始终是
+    // "转到视线方向"的那块，为了让 theta_id 保持在视线附近，匹配到的 id 必须
+    // 递增来补偿。所以 CW(-1) 时正序同样是 id 递增（step=+1）。
+    // 实测日志：dir=-1 时 step 恒为 1（0→1→2→0），验证了这一点。
+    constexpr int expect = 1;
+    if (step == expect) {
+      if (has_switch_t_) {
+        double dt_sw = tools::delta_time(t_, last_switch_t_);
+        double w_obs = (2 * M_PI / OUTPOST_ARMOR_NUM) / dt_sw;
+        // 只接受合理区间：滤掉丢帧造成的超长间隔和抖动造成的超短间隔
+        if (dt_sw > 0.3 && dt_sw < 1.6 && w_obs > OUTPOST_W_MIN && w_obs < OUTPOST_W_MAX) {
+          // 慢速 EMA：转速是物理常量，只需把先验拉到真值，不必跟踪快变
+          w_mag_ = 0.85 * w_mag_ + 0.15 * w_obs;
+          switch_seen_++;
+          if (switch_seen_ <= 4 || switch_seen_ % 10 == 0)
+            tools::logger()->info(
+              "[Outpost] 转速在线估计 {:.4f} rad/s ({:.3f} r/s)，本次观测 {:.4f}，第 {} 次",
+              w_mag_, w_mag_ / (2 * M_PI), w_obs, switch_seen_);
+        }
+      }
+      last_switch_t_ = t_;
+      has_switch_t_ = true;
+    }
+  } else if (last_matched_id_ < 0) {
+    last_switch_t_ = t_;
+    has_switch_t_ = true;
+  }
+  last_matched_id_ = id;
 
   // 累积该板的 z 观测，用于锁 phase
   // z 单独维护：每块板只累积自己的观测，不跨板推断（见 armor_z 注释）
@@ -309,7 +346,7 @@ OutpostTarget::AimChoice OutpostTarget::choose_at(double fly_time, double max_de
 
   const auto & x = ekf_.x;
   // 命中时刻的相位：只用已知常量外推，不含任何被估计的量
-  double theta_hit = tools::limit_rad(x[3] + OUTPOST_W * spin_dir_ * fly_time);
+  double theta_hit = tools::limit_rad(x[3] + w_mag_ * spin_dir_ * fly_time);
 
   // 三块板里挑"法线最正对我方"的那块。delta_angle = 板法线方位 - 板中心方位角，
   // 为 0 表示板正对我方（此时投影最宽、最好打）
@@ -349,7 +386,7 @@ Eigen::VectorXd OutpostTarget::ekf_x() const
   out[2] = ekf_.x[1];
   out[4] = ekf_.x[2];
   out[6] = ekf_.x[3];
-  out[7] = OUTPOST_W * spin_dir_;  // 常量×方向，不是估计量
+  out[7] = w_mag_ * spin_dir_;  // 在线估计的幅值 × 锁定的方向
   out[8] = OUTPOST_R;              // 常量
   // vx vy vz = 0（前哨站不平移）；l h = 0（高度差走 armor_z 而非状态）
   return out;

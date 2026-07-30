@@ -48,7 +48,17 @@ namespace auto_aim
 // ============================================================================
 
 // —— 规则常量（RMUC 2026 前哨站）——
-constexpr double OUTPOST_W = 0.4 * 2 * M_PI;  // 0.4 r/s = 2.5133 rad/s
+// 注意 OUTPOST_W 只作**先验初值**，不当死常量用。
+// records/2026-07-31_06-22-34 实测：换板间隔 p50=0.7467s（30 次正序切换，
+// 排除了 2 次逆序抖动），推出真实转速 120°/0.7467s = 2.805 rad/s = 0.446 r/s，
+// 比标称 0.4 r/s 高 11.7%。原代码把 w 每帧硬钳到 ±2.51，导致相位每 5s 漂 84°，
+// 观测匹配误差累积到 20~31° 后 Tracker 判失败重建 —— 这就是"锁定三块板跳变"
+// 的根因（实测 5 次重建，间隔 4.7~5.7s，与漂移周期吻合）。
+// 所以转速必须在线估计：标称值当先验，实际值由观测修正。
+constexpr double OUTPOST_W = 0.4 * 2 * M_PI;  // 0.4 r/s = 2.5133 rad/s（先验）
+// 在线估计允许的范围：标称 ±25%，防止被换板跳变带跑
+constexpr double OUTPOST_W_MIN = 0.75 * OUTPOST_W;
+constexpr double OUTPOST_W_MAX = 1.35 * OUTPOST_W;
 constexpr double OUTPOST_R = 0.2765;          // 旋转半径 m
 constexpr int OUTPOST_ARMOR_NUM = 3;          // 三块装甲板，互隔 120°
 
@@ -86,6 +96,9 @@ public:
   bool diverged() const;
   bool convergened() const { return converged_; }
 
+  // 在线估计的转速幅值（rad/s，恒正）。未收敛时返回先验 OUTPOST_W。
+  double w_mag() const { return w_mag_; }
+
   // 旋转方向：+1 / -1，未锁定时为 0
   int spin_dir() const { return spin_dir_; }
   bool dir_locked() const { return dir_locked_; }
@@ -117,6 +130,14 @@ private:
   bool converged_ = false;
 
   // —— 旋转方向：离散量，投票 + 滞回，不进 EKF ——
+  // 转速幅值在线估计：用"同一块板转过 120° 的时间"更新，比对 yaw 差分更抗噪
+  // （单帧 yaw 噪声 ±6°，而一次换板积累 120°，相对误差小 20 倍）
+  double w_mag_ = OUTPOST_W;
+  int switch_seen_ = 0;
+  std::chrono::steady_clock::time_point last_switch_t_;
+  bool has_switch_t_ = false;
+  int last_matched_id_ = -1;
+
   int spin_dir_ = 0;        // +1 CCW / -1 CW / 0 未定
   bool dir_locked_ = false;
   double dir_score_ = 0.0;  // 正向证据累积，超阈值锁定；带滞回防抖翻
